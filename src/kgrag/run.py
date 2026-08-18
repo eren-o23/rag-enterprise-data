@@ -15,7 +15,7 @@ STAGES = ("fetch", "chunk", "extract", "resolve", "load")
 
 def main() -> None:
     parser = argparse.ArgumentParser(prog="kgrag", description=__doc__)
-    parser.add_argument("stage", choices=(*STAGES, "all", "models"))
+    parser.add_argument("stage", choices=(*STAGES, "all", "verify", "models"))
     parser.add_argument(
         "--budget",
         type=float,
@@ -34,6 +34,11 @@ def main() -> None:
 
     if args.stage == "models":
         fireworks.list_models()
+        return
+    if args.stage == "verify":
+        from . import verify
+
+        verify.run()
         return
 
     stages = STAGES if args.stage == "all" else (args.stage,)
