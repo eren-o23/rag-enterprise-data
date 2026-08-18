@@ -13,3 +13,6 @@ __pycache__/
 
 # macos
 .DS_Store
+
+# original project spec — kept local, not published
+rag-enterprise-data.md

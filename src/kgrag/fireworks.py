@@ -14,10 +14,11 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable, TypeVar
 
-from openai import OpenAI
+from openai import APIConnectionError, APIStatusError, OpenAI, RateLimitError
 
 from .config import CACHE, require
 
@@ -42,6 +43,30 @@ UNKNOWN_PRICE = (2.0, 6.0)  # deliberately pessimistic: an unpriced model trips 
 
 class BudgetExceeded(RuntimeError):
     pass
+
+
+T = TypeVar("T")
+
+#: Exponential backoff for transient failures. A 2743-chunk sequential run WILL hit rate
+#: limits; without this a single 429 kills the whole run instead of pausing for it.
+#: 5xx is included because Fireworks' serverless endpoints occasionally 503 under load.
+def _with_backoff(call: Callable[[], T], attempts: int = 6) -> T:
+    for attempt in range(attempts):
+        try:
+            return call()
+        except RateLimitError:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(min(2**attempt, 60))
+        except APIStatusError as exc:
+            if exc.status_code < 500 or attempt == attempts - 1:
+                raise
+            time.sleep(min(2**attempt, 60))
+        except APIConnectionError:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(min(2**attempt, 60))
+    raise AssertionError("unreachable")
 
 
 @dataclass
@@ -115,11 +140,13 @@ def chat_json(
         METER.cached += 1
         return json.loads(path.read_text())
 
-    response = client().chat.completions.create(
-        model=model,
-        temperature=temperature,
-        messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
-        response_format={"type": "json_schema", "json_schema": {"name": "extraction", "schema": schema}},
+    response = _with_backoff(
+        lambda: client().chat.completions.create(
+            model=model,
+            temperature=temperature,
+            messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+            response_format={"type": "json_schema", "json_schema": {"name": "extraction", "schema": schema}},
+        )
     )
     usage = response.usage
     METER.record(model, usage.prompt_tokens, usage.completion_tokens)
@@ -146,7 +173,7 @@ def embed(texts: list[str], model: str = EMBED_MODEL, batch: int = 64) -> list[l
     api = client() if todo else None
     for start in range(0, len(todo), batch):
         idxs = todo[start : start + batch]
-        response = api.embeddings.create(model=model, input=[texts[i] for i in idxs])
+        response = _with_backoff(lambda: api.embeddings.create(model=model, input=[texts[i] for i in idxs]))
         METER.record(model, response.usage.total_tokens, 0)
         for i, item in zip(idxs, response.data):
             out[i] = item.embedding
