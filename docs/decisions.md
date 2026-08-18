@@ -1,0 +1,157 @@
+# Design decisions
+
+Short ADRs. Each one exists because the alternative was tried, considered, or would be
+the obvious question in an interview. Ordered by when they were made, not by importance.
+
+---
+
+## Open-weight models via Fireworks, not the Claude API
+
+The project brief specs Claude. Every project in this portfolio runs on open-weight
+models instead — the point is to show the same engineering rigor works without a
+frontier proprietary API, on a fixed $55 budget. `gpt-oss-120b` for extraction,
+`qwen3-embedding-8b` for entity resolution and (Phase 2) chunk embeddings.
+
+**Cost of the decision:** open models are worse at instruction-following edge cases,
+so the schema-and-validator layer below carries more weight than it would with Claude.
+That's a feature for this portfolio, not a bug — it's the part worth showing.
+
+## No LangChain
+
+Fireworks is OpenAI-API-compatible, so the entire stack is `openai` + `neo4j` +
+`pydantic`. The pipeline's interesting engineering — retry, content-addressed caching,
+budget enforcement, schema validation — is exactly the layer LangChain would abstract
+away. Burying it saves ~150 lines and costs the one part of the codebase worth an
+interviewer reading.
+
+## Ontology frozen before any pipeline code
+
+`ontology.py` was the second file written, before fetch/chunk/extract existed. Types
+are `StrEnum`s embedded in the JSON schema handed to Fireworks, so constrained decoding
+makes an off-ontology entity or relation type structurally unreachable, not merely
+discouraged by a prompt. `ALLOWED_EDGES` — a `(subject_type, object_type)` signature per
+relation — is the single source of truth: it generates the prompt's ontology block,
+validates extraction output, and gates the Cypher write.
+
+**Alternative considered:** open-ended extraction ("extract all entities and
+relationships you find"), rejected per the project brief — it produces a graph nobody
+can write a query against.
+
+## RiskTopic is a closed vocabulary, not free text
+
+Fifteen fixed risk themes (`supply chain concentration`, `export controls`, ...) rather
+than letting the model name risks in its own words. Left open, every filing invents a
+new phrasing and every `RiskTopic` node ends up with degree 1 — a graph that looks full
+and answers nothing about which companies share which exposures.
+
+## Evidence-span verification as the hallucination filter
+
+Every extracted relation carries a verbatim `evidence` field, checked as a
+whitespace-normalized substring of the source chunk (`ontology.validate`, rule 3). A
+fabricated relation essentially never comes with a real quotable span, so this catches
+hallucination for free — no second model call, no separate fact-checking pass. Dropped
+relations are counted by reason (`unknown_endpoint`, `type_signature`,
+`evidence_not_found`, `self_loop`, `unknown_risk_topic`) and reported after every run.
+
+## Deterministic chunk ids: `sha256(accession|section_path|ordinal)[:16]`
+
+Not a UUID, not a row number. Phase 2 embeds these same chunks into pgvector and joins
+on this key; Phase 4 cites it in answers. A hash of the chunk's identity means the same
+document chunked next year — or after an unrelated code change — produces byte-identical
+ids, which is what makes `MERGE`-based ingestion actually idempotent instead of merely
+re-runnable. Verified by `tests/test_pipeline.py::test_chunk_ids_are_deterministic_across_runs`.
+
+## Cost probe before committing to a full extraction run
+
+`extract.run()` samples 15 chunks, prints `$/chunk` and a projected total for the full
+corpus, and requires `--yes` to proceed. This is the specific trap the project brief
+warns about — it's easy to learn what a corpus costs only after paying for it. The probe
+itself is cached, so continuing after reviewing the number costs only the remainder.
+
+## Entity resolution: three named match rules, not one embedding threshold
+
+`resolve.matches()` returns `"exact"`, `"embedding"`, `"acronym"`, or `"override"` — never
+a bare boolean — because each rule fails differently and a portfolio project should be
+able to say *why* two names merged, not just *that* they did.
+
+- **Embedding cosine alone is not enough.** "Advanced Micro Devices" and "Advanced
+  Energy Industries" embed close together; cosine ≥ τ merges them. The lexical gate
+  (token Jaccard ≥ 0.5, required in addition to cosine) blocks it —
+  `test_lexical_gate_blocks_the_classic_false_merge`.
+- **The lexical gate alone can't catch acronyms.** "AMD" and "Advanced Micro Devices"
+  share zero tokens, so Jaccard is 0 regardless of threshold. A dedicated acronym rule
+  exists for exactly this case, and blocking (candidate generation) emits an acronym key
+  too — without it the pair is never even compared, since prefix blocking alone puts
+  "amd" and "advanced..." in different buckets — `test_acronym_merges_where_no_cosine_threshold_could`.
+- **A few pairs will never be right by rule.** `overrides.jsonl` holds hand-decided
+  merges and splits in both directions. "TSMC" expands to Taiwan Semiconductor
+  Manufacturing *Company*, and its C comes from a word `normalize()` deliberately keeps
+  as legal boilerplate... except "Company" isn't stripped as a legal suffix (see below),
+  so it's actually the *N.V./Inc./Ltd.*-style single-letter-token stripping that misses
+  it. Rather than special-case the normalizer further, the pair is a one-line override.
+  The override count is itself a quality signal — if it grows past a couple dozen, the
+  rules are wrong, not the corpus.
+
+## Normalization strips legal form only, never industry words
+
+The first pass also stripped "technology", "solutions", "semiconductor", etc., because
+they read like filler. They aren't, in this corpus: it turned "Taiwan Semiconductor
+Manufacturing" into "taiwan manufacturing" and would have merged "ON Semiconductor"
+with any other company starting "ON ...". Reverted to legal-suffix-only stripping
+(`inc`, `corp`, `llc`, `ltd`, `plc`, `nv`, `sa`, `ag`, `gmbh`, `holdings`, `the`), plus a
+trailing-single-letter-token drop to catch `"N.V."` → `"n v"` after punctuation removal.
+
+## Canonical id keys on the cluster's smallest normalized member, not its most frequent
+
+`resolve.canonical_id()` hashes `min(normalized names in the cluster)`. Frequency shifts
+every time the corpus grows or the prompt changes what gets extracted; the alphabetic
+minimum of a cluster's members does not. An id that moves invalidates every citation
+already written against it — a stability property, not an optimization.
+
+## `MERGE`-only writes, relationship type interpolated from a validated enum
+
+Cypher can't parameterize a relationship type — `MERGE (a)-[:$type]->(b)` isn't legal
+syntax — so `load.py` groups edges by predicate and interpolates the type into the query
+string per group. This is safe *only* because the interpolated value is always a
+`RelationType` enum member, checked via `RelationType(predicate).value` immediately
+before use, never a raw string from model output or elsewhere. It's the same "never let
+the model write Cypher" rule the brief sets for the Phase 3 router, applied one phase
+earlier at write time.
+
+## One edge per fact, `chunk_ids` as a list, not one edge per citation
+
+Two chunks stating the same relationship is corroboration, not two separate facts.
+`load.py` accumulates `chunk_ids` on the edge via `apoc.coll.toSet`, tracks `support`
+(distinct chunk count) as a corroboration-strength signal, and upgrades `confidence` to
+`"high"` if any contributing chunk stated it directly. Phase 4 reads `chunk_ids`
+straight off the edge to cite the sentences that justified a claim.
+
+---
+
+## Bugs that would have silently corrupted the corpus
+
+Kept here rather than buried in commit history because both looked like something else
+at first, and "what looked like a parser bug and wasn't" is a more useful thing to be
+able to say out loud than the fix itself.
+
+### `10-K` filing search also matches `10-K/A` amendments
+
+`Company.get_filings(form="10-K")` prefix-matches, so it returned AMD's and Skyworks'
+most recent **amendments** as their "latest 10-K." An amendment contains only the items
+it amends — AMD's exposed Items 7 and 15 only; Items 1, 1A, and 3 (Business, Risk
+Factors, Legal Proceedings) were silently absent, and the code correctly skipped them as
+"not present in this filing." Both companies would have entered the graph with no
+`EXPOSED_TO` or `SUPPLIES` edges at all, and nothing would have errored. Fixed with
+`get_filings(form="10-K", amendments=False)`.
+
+### The first DEF 14A prefilter matched everything
+
+The initial regex looked for any of `director`, `board`, `officer`, `chairman`, etc. —
+words that appear on nearly every page of a proxy statement — and kept 2,126 of 2,126
+proxy chunks. It compiled, ran, and produced a plausible-looking chunk count, so nothing
+about the failure was visible without actually inspecting the ratio of governance
+content to compensation-table noise. Replaced with a requirement for an actual statement
+of board *service* (`"serves on the board"`, `"director of"`, `"election of directors"`,
+...), which drops to 971 chunks and removes the compensation and equity-plan pages that
+were diluting the ones that actually name directors' seats at other companies — the
+signal Phase 5's three-hop questions depend on.
