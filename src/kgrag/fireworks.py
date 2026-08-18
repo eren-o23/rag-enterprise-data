@@ -45,13 +45,33 @@ class BudgetExceeded(RuntimeError):
     pass
 
 
+#: The account's Fireworks quota page shows Serverless Inference Rpm: 10 — a hard cap,
+#: not a burst allowance. A sequential loop with no pacing bursts past it in the first
+#: few calls, gets 429'd, and exponential backoff (up to 60s a step) then wildly
+#: overshoots recovering from a limit that resets every minute. Pacing calls to stay
+#: under the cap avoids triggering the penalty at all, instead of reactively paying for
+#: it. Raise this if the account's Rpm quota changes.
+REQUESTS_PER_MINUTE = 9  # one below the quota, as margin
+_last_call = 0.0
+
+
 T = TypeVar("T")
 
 #: Exponential backoff for transient failures. A 2743-chunk sequential run WILL hit rate
 #: limits; without this a single 429 kills the whole run instead of pausing for it.
 #: 5xx is included because Fireworks' serverless endpoints occasionally 503 under load.
+def _pace() -> None:
+    global _last_call
+    interval = 60.0 / REQUESTS_PER_MINUTE
+    wait = _last_call + interval - time.monotonic()
+    if wait > 0:
+        time.sleep(wait)
+    _last_call = time.monotonic()
+
+
 def _with_backoff(call: Callable[[], T], attempts: int = 6) -> T:
     for attempt in range(attempts):
+        _pace()
         try:
             return call()
         except RateLimitError:
