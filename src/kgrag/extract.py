@@ -18,6 +18,7 @@ from __future__ import annotations
 from collections import Counter
 from typing import Any
 
+from openai import APIStatusError
 from pydantic import ValidationError
 
 from . import fireworks, jsonl, ontology
@@ -73,17 +74,28 @@ def _user_message(chunk: dict[str, Any]) -> str:
 
 
 def extract_one(chunk: dict[str, Any], model: str = fireworks.EXTRACT_MODEL) -> dict[str, Any]:
-    """Extract one chunk. One retry with the validation error fed back, then quarantine."""
+    """Extract one chunk. One retry with the validation error fed back, then quarantine.
+
+    A single chunk can fail in a way no retry fixes - Fireworks has returned a flat 400
+    ("safe_tokenization... not available for this model") on specific chunk content with
+    nothing wrong in the request itself. Unretried, that one chunk killed a 2700-chunk
+    run at chunk 196. `APIStatusError` is quarantined like a validation failure; only
+    `fireworks.BudgetExceeded` (checked by name, not caught here) is meant to propagate
+    and stop the whole run.
+    """
     user = _user_message(chunk)
     last_error = ""
 
     for attempt in range(2):
-        payload = fireworks.chat_json(
-            system=SYSTEM,
-            user=user + last_error,
-            schema=SCHEMA,
-            model=model,
-        )
+        try:
+            payload = fireworks.chat_json(
+                system=SYSTEM,
+                user=user + last_error,
+                schema=SCHEMA,
+                model=model,
+            )
+        except APIStatusError as exc:
+            return {"chunk_id": chunk["chunk_id"], "error": f"{type(exc).__name__}: {exc}"}
         try:
             extraction = ontology.Extraction.model_validate(payload)
         except ValidationError as exc:
