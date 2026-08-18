@@ -58,6 +58,10 @@ def _doc(filing, section_path: str, text: str, ticker: str) -> dict[str, Any] | 
         return None
     return {
         "ticker": ticker,
+        # The filer's own name. 10-Ks say "we" and "our Company" on every page, so the
+        # extraction prompt has to be told who the filer is or first-person references
+        # become unresolvable mentions.
+        "company": filing.company,
         "cik": int(filing.cik),
         "form": filing.form,
         "accession": filing.accession_no,

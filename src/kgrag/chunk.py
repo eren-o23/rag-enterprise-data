@@ -1,0 +1,118 @@
+"""Split sections into extraction-sized chunks with deterministic ids.
+
+The chunk id is the load-bearing decision of Phase 1. Phase 2 embeds these same
+chunks into pgvector and joins on this key; Phase 4 cites it. So it is a hash of
+(accession, section_path, ordinal) rather than a UUID or a row number — the same
+document chunked next year produces byte-identical ids, which is what makes the
+whole pipeline idempotent instead of merely re-runnable.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import re
+from typing import Any, Iterator
+
+from . import jsonl
+from .config import CHUNKS, DOCS
+
+#: ~1000 tokens of text per chunk. Big enough that a relation and its evidence span
+#: usually survive intact, small enough that the model does not start summarising.
+TARGET_CHARS = 4000
+OVERLAP_CHARS = 800
+MIN_CHARS = 300
+
+#: DEF 14A prefilter. A proxy is ~330k chars and most of it is compensation and
+#: beneficial-ownership tables that contain no extractable relation. Sending them
+#: costs tokens and, worse, dilutes the chunks that do carry board seats.
+GOVERNANCE = re.compile(
+    r"\b(director|board of directors|serves? on the board|nominee|chief executive"
+    r"|chief financial|chief operating|chief technolog|president|audit committee"
+    r"|executive officer|chair(man|woman|person)?\b)",
+    re.IGNORECASE,
+)
+
+
+def chunk_id(accession: str, section_path: str, ordinal: int) -> str:
+    return hashlib.sha256(f"{accession}|{section_path}|{ordinal}".encode()).hexdigest()[:16]
+
+
+def _split(text: str) -> Iterator[str]:
+    """Accumulate paragraphs up to TARGET_CHARS, carrying OVERLAP_CHARS between chunks.
+
+    Splitting on paragraph boundaries rather than a fixed stride keeps sentences whole,
+    which matters because the model must quote a verbatim evidence span and a span cut
+    in half fails the substring check for no good reason.
+    """
+    paragraphs = [p for p in re.split(r"\n\s*\n", text) if p.strip()]
+    buffer: list[str] = []
+    size = 0
+
+    for para in paragraphs:
+        # A single oversized paragraph (dense tables, run-on risk factors) is hard-split.
+        while len(para) > TARGET_CHARS:
+            head, para = para[:TARGET_CHARS], para[TARGET_CHARS - OVERLAP_CHARS :]
+            if buffer:
+                yield "\n\n".join(buffer)
+                buffer, size = [], 0
+            yield head
+        if size + len(para) > TARGET_CHARS and buffer:
+            chunk = "\n\n".join(buffer)
+            yield chunk
+            tail = chunk[-OVERLAP_CHARS:]
+            buffer, size = [tail], len(tail)
+        buffer.append(para)
+        size += len(para) + 2
+
+    if buffer:
+        yield "\n\n".join(buffer)
+
+
+def _keep(doc: dict[str, Any], text: str) -> bool:
+    if len(text) < MIN_CHARS:
+        return False
+    if doc["section_path"] != "DEF 14A":
+        return True
+    if not GOVERNANCE.search(text):
+        return False
+    # Compensation and ownership tables match "officer" but are mostly digits.
+    dense = sum(c.isdigit() for c in text) / max(sum(not c.isspace() for c in text), 1)
+    return dense < 0.25
+
+
+def run() -> None:
+    docs = list(jsonl.read(DOCS))
+    if not docs:
+        raise SystemExit("data/docs.jsonl is empty — run `kgrag fetch` first.")
+
+    rows, skipped = [], 0
+    for doc in docs:
+        for ordinal, text in enumerate(_split(doc["text"])):
+            if not _keep(doc, text):
+                skipped += 1
+                continue
+            rows.append(
+                {
+                    "chunk_id": chunk_id(doc["accession"], doc["section_path"], ordinal),
+                    "ticker": doc["ticker"],
+                    "company": doc["company"],
+                    "cik": doc["cik"],
+                    "form": doc["form"],
+                    "accession": doc["accession"],
+                    "filing_date": doc["filing_date"],
+                    "section_path": doc["section_path"],
+                    "text": text,
+                }
+            )
+
+    assert len({r["chunk_id"] for r in rows}) == len(rows), "chunk id collision"
+    n = jsonl.write(CHUNKS, rows)
+    chars = sum(len(r["text"]) for r in rows)
+    print(f"chunks.jsonl: {n} chunks, {chars:,} chars (~{chars // 4:,} tokens)")
+    print(f"prefiltered out: {skipped} chunks")
+
+    by_form: dict[str, int] = {}
+    for r in rows:
+        by_form[r["section_path"].split("/")[0]] = by_form.get(r["section_path"].split("/")[0], 0) + 1
+    for form, count in sorted(by_form.items()):
+        print(f"  {form:10} {count:5}")
