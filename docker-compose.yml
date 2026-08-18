@@ -1,0 +1,41 @@
+# Local stores for the pipeline. `docker compose up -d` and both are ready.
+services:
+  neo4j:
+    image: neo4j:5.26-community
+    ports:
+      - "7474:7474"   # browser
+      - "7687:7687"   # bolt
+    environment:
+      NEO4J_AUTH: neo4j/devpassword
+      NEO4J_PLUGINS: '["apoc"]'
+      # apoc.coll.toSet is used in the edge MERGE to keep chunk_ids idempotent
+      NEO4J_dbms_security_procedures_unrestricted: apoc.*
+    volumes:
+      - neo4j_data:/data
+    healthcheck:
+      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "devpassword", "RETURN 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # ponytail: idle until Phase 2. Here now so the chunk ids minted in Phase 1
+  # have somewhere to land without a compose change later.
+  postgres:
+    image: pgvector/pgvector:pg17
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: kgrag
+      POSTGRES_PASSWORD: devpassword
+      POSTGRES_DB: kgrag
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kgrag"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  neo4j_data:
+  pg_data:
