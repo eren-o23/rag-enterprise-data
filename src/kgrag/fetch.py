@@ -99,10 +99,17 @@ def _sections(filing, ticker: str) -> Iterator[dict[str, Any]]:
 
 
 def _pin(ticker: str) -> Iterator[Any]:
-    """Resolve which filings this company contributes. Called once; then pinned."""
+    """Resolve which filings this company contributes. Called once; then pinned.
+
+    `amendments=False` is load-bearing. EDGAR form matching is prefix-based, so "10-K"
+    also matches "10-K/A", and an amendment contains *only* the items it amends — AMD's
+    most recent 10-K/A carries Items 7 and 15, Skyworks' carries Items 10 through 15.
+    Taking the latest match silently cost those two companies their entire Business and
+    Risk Factors sections, which reads as a parser bug and is not one.
+    """
     company = Company(ticker)
     for form, n in (("10-K", 1), ("DEF 14A", 1), ("8-K", EIGHTK_LOOKBACK)):
-        yield from company.get_filings(form=form).head(n)
+        yield from company.get_filings(form=form, amendments=False).head(n)
 
 
 def run(tickers: tuple[str, ...] = UNIVERSE) -> None:

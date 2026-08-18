@@ -20,7 +20,7 @@ CHUNKS = DATA / "chunks.jsonl"
 EXTRACTIONS = DATA / "extractions.jsonl"
 ENTITIES = DATA / "entities.jsonl"
 FAILURES = DATA / "failures.jsonl"
-BLOCKLIST = DATA / "blocklist.jsonl"
+OVERRIDES = DATA / "overrides.jsonl"
 
 
 def require(name: str) -> str:

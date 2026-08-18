@@ -22,13 +22,21 @@ TARGET_CHARS = 4000
 OVERLAP_CHARS = 800
 MIN_CHARS = 300
 
-#: DEF 14A prefilter. A proxy is ~330k chars and most of it is compensation and
-#: beneficial-ownership tables that contain no extractable relation. Sending them
-#: costs tokens and, worse, dilutes the chunks that do carry board seats.
+#: DEF 14A prefilter. A proxy runs ~330k chars and the great majority of it is
+#: compensation discussion and beneficial-ownership tables, which contain no extractable
+#: relation. Sending them costs tokens and, worse, dilutes the chunks that do carry board
+#: seats with hundreds of near-identical pages about equity incentive plans.
+#:
+#: A first pass matching any governance word kept 2126 of 2126 proxy chunks — "director"
+#: and "officer" appear on nearly every page of a proxy, so the filter did nothing.
+#: Requiring an actual statement of board *service* keeps 971. The dropped chunks are
+#: compensation tables; the kept ones are director bios and nominee tables, which is
+#: where directors' seats at OTHER companies live.
 GOVERNANCE = re.compile(
-    r"\b(director|board of directors|serves? on the board|nominee|chief executive"
-    r"|chief financial|chief operating|chief technolog|president|audit committee"
-    r"|executive officer|chair(man|woman|person)?\b)",
+    r"(?:serve[sd]?|has served|currently serves)[^.]{0,60}"
+    r"(?:on the board|as a director|as director|board of directors)"
+    r"|\bdirector of\b|\bboard member of\b|\bboards? of\b"
+    r"|director nominee|election of directors|continuing directors",
     re.IGNORECASE,
 )
 
