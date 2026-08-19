@@ -19,7 +19,7 @@ import datetime as dt
 from collections import Counter
 from typing import Any
 
-from openai import APIStatusError
+from openai import APIConnectionError, APIStatusError
 from pydantic import ValidationError
 
 from . import fireworks, jsonl, ontology
@@ -77,12 +77,16 @@ def _user_message(chunk: dict[str, Any]) -> str:
 def extract_one(chunk: dict[str, Any], model: str = fireworks.EXTRACT_MODEL) -> dict[str, Any]:
     """Extract one chunk. One retry with the validation error fed back, then quarantine.
 
-    A single chunk can fail in a way no retry fixes - Fireworks has returned a flat 400
+    A single chunk can fail in a way no retry fixes. Two variants seen so far: a flat 400
     ("safe_tokenization... not available for this model") on specific chunk content with
-    nothing wrong in the request itself. Unretried, that one chunk killed a 2700-chunk
-    run at chunk 196. `APIStatusError` is quarantined like a validation failure; only
-    `fireworks.BudgetExceeded` (checked by name, not caught here) is meant to propagate
-    and stop the whole run.
+    nothing wrong in the request itself, and a chunk that timed out on all 6 backoff
+    attempts (~10+ minutes) before `_with_backoff` gave up and re-raised. Unretried, each
+    one killed a 2700-chunk run outright - once at chunk 196, once after burning ten
+    minutes at chunk ~1403. `APIStatusError` (4xx/5xx) and `APIConnectionError`
+    (`APITimeoutError` is a subtype - network/timeout failures `_with_backoff` already
+    exhausted its retries on) are both quarantined like a validation failure. Only
+    `fireworks.BudgetExceeded` (a plain RuntimeError, not an openai exception - checked by
+    name, not caught here) is meant to propagate and stop the whole run.
     """
     user = _user_message(chunk)
     last_error = ""
@@ -95,7 +99,7 @@ def extract_one(chunk: dict[str, Any], model: str = fireworks.EXTRACT_MODEL) -> 
                 schema=SCHEMA,
                 model=model,
             )
-        except APIStatusError as exc:
+        except (APIStatusError, APIConnectionError) as exc:
             return {"chunk_id": chunk["chunk_id"], "error": f"{type(exc).__name__}: {exc}"}
         try:
             extraction = ontology.Extraction.model_validate(payload)
