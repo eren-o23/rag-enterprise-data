@@ -15,6 +15,7 @@ almost never comes with a span that survives a substring test against the chunk.
 
 from __future__ import annotations
 
+import datetime as dt
 from collections import Counter
 from typing import Any
 
@@ -159,8 +160,9 @@ def run(limit: int | None = None, assume_yes: bool = False, model: str = firewor
             jsonl.append(EXTRACTIONS, [result])
             dropped_total.update(result["dropped"])
         if i % 50 == 0 or i == len(todo):
+            now = dt.datetime.now().strftime("%H:%M:%S")
             print(
-                f"  {i}/{len(todo)}  ${fireworks.METER.usd:.3f}  "
+                f"  [{now}] {i}/{len(todo)}  ${fireworks.METER.usd:.3f}  "
                 f"{len(failures)} quarantined  {sum(dropped_total.values())} relations dropped"
             )
 

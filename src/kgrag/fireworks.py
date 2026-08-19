@@ -129,7 +129,15 @@ METER = Meter()
 
 
 def client() -> OpenAI:
-    return OpenAI(api_key=require("FIREWORKS_API_KEY"), base_url=BASE_URL)
+    # Without an explicit timeout, a connection that drops mid-response hangs the
+    # underlying socket read forever - no exception, so _with_backoff never gets a
+    # chance to retry. A 2743-call overnight run stalled silently for 11+ hours on
+    # exactly this: sockets sat in CLOSE_WAIT while the process waited on a read that
+    # was never coming. max_retries=0 because _with_backoff already owns retry policy;
+    # the SDK's own retry-on-timeout would silently double it.
+    return OpenAI(
+        api_key=require("FIREWORKS_API_KEY"), base_url=BASE_URL, timeout=90.0, max_retries=0
+    )
 
 
 def _cache_path(key: str) -> Any:
