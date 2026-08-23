@@ -155,6 +155,7 @@ def chat_json(
     model: str = EXTRACT_MODEL,
     temperature: float = 0.0,
     base_url: str = BASE_URL,
+    use_cache: bool = True,
 ) -> dict[str, Any]:
     """One constrained-decoding call, cached by content.
 
@@ -167,7 +168,11 @@ def chat_json(
         json.dumps([model, PROMPT_VERSION, system, user, schema], sort_keys=True).encode()
     ).hexdigest()
     path = _cache_path(key)
-    if path.exists():
+    # `kgrag bakeoff` sets use_cache=False. The production corpus was extracted with
+    # EXTRACT_MODEL, so every gold chunk is already cached under that model's key — a
+    # benchmark reading them back would report $0.0000 and 0.0s for the incumbent and
+    # full price for its challengers. Writes still happen; only the read is skipped.
+    if use_cache and path.exists():
         METER.cached += 1
         return json.loads(path.read_text())
 

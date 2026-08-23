@@ -31,6 +31,11 @@ def main() -> None:
     parser.add_argument(
         "--yes", action="store_true", help="skip the cost-projection confirmation prompt"
     )
+    parser.add_argument(
+        "--only",
+        default=None,
+        help="bakeoff: run just the models whose label contains this substring",
+    )
     args = parser.parse_args()
 
     fireworks.METER.limit_usd = args.budget
@@ -61,7 +66,7 @@ def main() -> None:
     if args.stage == "bakeoff":
         from . import bakeoff
 
-        bakeoff.run()
+        bakeoff.run(only=args.only)
         return
 
     stages = STAGES if args.stage == "all" else (args.stage,)

@@ -40,7 +40,7 @@ def _relation_set(relations: list[dict[str, Any]]) -> set[tuple[str, ...]]:
     return {(r["subject"].casefold(), r["predicate"], r["object"].casefold()) for r in relations}
 
 
-def run() -> None:
+def run(only: str | None = None) -> None:
     gold = list(jsonl.read(EVAL / "extraction_gold.jsonl"))
     if not gold:
         raise SystemExit("eval/extraction_gold.jsonl is empty.")
@@ -50,15 +50,29 @@ def run() -> None:
         raise SystemExit(f"{len(missing)} gold chunk_ids not in data/chunks.jsonl: {missing[:5]}")
     rows = [(g, chunks_by_id[g["chunk_id"]]) for g in gold]
 
+    gold_mentions = sum(len(g["mentions"]) for g in gold)
+    print(
+        f"{len(gold)} gold chunks, {gold_mentions} labelled mentions.\n"
+        "Read RECALL, not precision or F1. The gold set labels ~3x fewer mentions than the\n"
+        "models extract -- on an Exhibit 21 chunk a labeller stops after a few rows while\n"
+        "the model takes all 68 -- so most 'false positives' are real entities nobody wrote\n"
+        "down. Gold is a subset of truth, which leaves recall meaningful and precision a\n"
+        "measure of how thorough the labelling was. Precision here penalises the most\n"
+        "thorough model hardest, so it inverts the ranking it appears to give.\n"
+    )
     header = f"{'model':16} {'cost':>9} {'sec':>7} {'mP':>6} {'mR':>6} {'mF1':>6} {'rP':>6} {'rR':>6} {'rF1':>6}"
     print(header)
     for label, model, base_url in MODELS:
+        if only and only not in label:
+            continue
         before = fireworks.METER.usd
         start = time.monotonic()
         m_tp = m_fp = m_fn = r_tp = r_fp = r_fn = errors = 0
 
         for gold_row, chunk in rows:
-            result = extract.extract_one(chunk, model=model, base_url=base_url)
+            # Uncached on purpose: cost and latency are the point of this table, and the
+            # incumbent's gold chunks are already cached from the production run.
+            result = extract.extract_one(chunk, model=model, base_url=base_url, use_cache=False)
             if "error" in result:
                 errors += 1
                 predicted_mentions, predicted_relations = [], []

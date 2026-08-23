@@ -78,6 +78,7 @@ def extract_one(
     chunk: dict[str, Any],
     model: str = fireworks.EXTRACT_MODEL,
     base_url: str = fireworks.BASE_URL,
+    use_cache: bool = True,
 ) -> dict[str, Any]:
     """Extract one chunk. One retry with the validation error fed back, then quarantine.
 
@@ -103,6 +104,7 @@ def extract_one(
                 schema=SCHEMA,
                 model=model,
                 base_url=base_url,
+                use_cache=use_cache,
             )
         except (APIStatusError, APIConnectionError) as exc:
             return {"chunk_id": chunk["chunk_id"], "error": f"{type(exc).__name__}: {exc}"}
