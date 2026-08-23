@@ -16,7 +16,8 @@ STAGES = ("fetch", "chunk", "extract", "resolve", "load")
 def main() -> None:
     parser = argparse.ArgumentParser(prog="kgrag", description=__doc__)
     parser.add_argument(
-        "stage", choices=(*STAGES, "all", "verify", "models", "candidates", "sweep", "bakeoff")
+        "stage",
+        choices=(*STAGES, "all", "verify", "models", "candidates", "mine-pairs", "sweep", "bakeoff"),
     )
     parser.add_argument(
         "--budget",
@@ -46,6 +47,11 @@ def main() -> None:
         from . import resolve
 
         resolve.write_candidates()
+        return
+    if args.stage == "mine-pairs":
+        from . import resolve
+
+        resolve.mine_pairs()
         return
     if args.stage == "sweep":
         from . import resolve

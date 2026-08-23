@@ -1,88 +1,337 @@
-{"a": "Qualcomm Auto Limited", "b": "Qualcomm CDMA Technologies", "type": "Company", "same": false}
-{"a": "TSMC Arizona", "b": "TSMC Ltd.", "type": "Company", "same": false}
-{"a": "Xilinx Development Corporation(1)", "b": "Xilinx Technology Shanghai China Limited", "type": "Company", "same": false}
-{"a": "AMD Instinct MI350 Series GPUs", "b": "AMD Radeon\u2122 PRO V Series", "type": "Product", "same": false}
-{"a": "AMD Ryzen PRO solutions", "b": "AMD Radeon\u2122 PRO V Series", "type": "Product", "same": false}
-{"a": "Xilinx, Inc.", "b": "Xilinx Armenia LLC(1)", "type": "Company", "same": false}
-{"a": "Texas Instruments, Incorporated", "b": "Texas Instruments Hungary Korlatolt Felelossegu Tarsasag", "type": "Company", "same": false}
-{"a": "Texas Instruments Business Expansion GmbH", "b": "Texas Instruments Semiconductor Technologies PRC (Shanghai) Co., Ltd.", "type": "Company", "same": false}
-{"a": "Applied Materials Canada, Inc.", "b": "Applied Materials Finland International Finland Oy", "type": "Company", "same": false}
-{"a": "Texas Instruments (Shanghai) Co., Ltd.", "b": "Texas Instruments Romania S.R.L.", "type": "Company", "same": false}
-{"a": "ON Semiconductor France SAS", "b": "ON Semiconductor Leasing, LLC", "type": "Company", "same": false}
-{"a": "Paul A. Mascarenas", "b": "Paul V. Walsh, Jr.", "type": "Person", "same": false}
-{"a": "Applied Materials UK Limited", "b": "Applied Materials Korea Ltd.", "type": "Company", "same": false}
-{"a": "QUALCOMM India Private Limited", "b": "Qualcomm Inc.", "type": "Company", "same": false}
-{"a": "ON Semiconductor Adria d.o.o.", "b": "ON Semiconductor Benelux B.V.", "type": "Company", "same": false}
-{"a": "Skyworks Ireland Limited", "b": "Skyworks Solutions Canada Inc.", "type": "Company", "same": false}
-{"a": "Xilinx Armenia LLC(1)", "b": "Xilinx NI Limited", "type": "Company", "same": false}
-{"a": "Gregory L. Summe", "b": "GREGORY L. WATERS", "type": "Person", "same": false}
-{"a": "Texas Instruments (India) Private Limited", "b": "Texas Instruments Romania S.R.L.", "type": "Company", "same": false}
-{"a": "LED Products", "b": "LED driver products", "type": "Product", "same": false}
-{"a": "AMD Ryzen 8000 Series", "b": "AMD Ryzen PRO 200 Series mobile processors", "type": "Product", "same": false}
-{"a": "ALLEGRO MICROSYSTEMS, INC.", "b": "Allegro MicroSystems Ireland Ltd", "type": "Company", "same": false}
-{"a": "Mr. Brannan", "b": "Mr. Bock", "type": "Person", "same": false}
-{"a": "ADVANCED MICRO DEVICES INC", "b": "Advanced Micro Devices (Shanghai) Co., Ltd.(9)", "type": "Company", "same": false}
-{"a": "Texas Instruments Romania S.R.L.", "b": "Texas Instruments, Inc.", "type": "Company", "same": false}
-{"a": "Xilinx Technology Shanghai Limited(8)", "b": "Xilinx AB", "type": "Company", "same": false}
-{"a": "Intel Electronics Ltd.", "b": "Intel Products Vietnam Co., Ltd.", "type": "Company", "same": false}
-{"a": "Mr. Beyer", "b": "Mr. Bunker", "type": "Person", "same": false}
-{"a": "Maxim Integrated Products Asia Limited", "b": "Maxim India Integrated Circuit Design Private Limited", "type": "Company", "same": false}
-{"a": "Marvell Technology Group Ltd", "b": "Marvell Argentina S.A.U.", "type": "Company", "same": false}
-{"a": "Mr. Harding", "b": "Mr. Henry", "type": "Person", "same": false}
-{"a": "Ms. Spradley", "b": "Mr. Seifert", "type": "Person", "same": false}
-{"a": "AMD Instinct MI350 Series GPUs", "b": "AMD Radeon PRO family", "type": "Product", "same": false}
-{"a": "AMD Radeon\u2122 PRO V families", "b": "AMD Ryzen PRO 200 Series mobile processors", "type": "Product", "same": false}
-{"a": "NXP Philippines, Inc.", "b": "NXP Semiconductors Nordic AB", "type": "Company", "same": false}
-{"a": "KLA Corporation UK Ltd", "b": "KLA-Tencor Italy S.R.L.", "type": "Company", "same": false}
-{"a": "APPLIED MATERIALS INC /DE", "b": "Applied Materials France S.a.r.l.", "type": "Company", "same": false}
-{"a": "Mark E. Jensen", "b": "Mark D. Papermaster", "type": "Person", "same": false}
-{"a": "MARIYA TRICKETT", "b": "Maryann Turcke", "type": "Person", "same": false}
-{"a": "AMD Ryzen Threadripper\u2122", "b": "AMD Ryzen Embedded Series processors", "type": "Product", "same": false}
-{"a": "AMD Embedded Radeon graphics", "b": "AMD R Series", "type": "Product", "same": false}
-{"a": "Lam Research Semiconductor\n (Shanghai) Co.", "b": "Lam Research Service Co., Ltd.", "type": "Company", "same": false}
-{"a": "Applied Materials WEB Coating GmbH", "b": "Applied Materials Ireland Limited", "type": "Company", "same": false}
-{"a": "NXP Semiconductors (Shanghai) Co., Ltd.", "b": "NXP India Pvt. Ltd.", "type": "Company", "same": false}
-{"a": "AMD Radeon PRO family", "b": "AMD Instinct MI350X Series GPUs", "type": "Product", "same": false}
-{"a": "Marvell eSilicon LLC", "b": "Marvell Technology (Chengdu), Ltd.", "type": "Company", "same": false}
-{"a": "Qorvo Belgium NV", "b": "Qorvo Utrecht B.V.", "type": "Company", "same": false}
-{"a": "ON Semiconductor Ireland Research and Design Limited", "b": "ON Semiconductor Slovakia, a.s.", "type": "Company", "same": false}
-{"a": "Mr. Brown", "b": "Mr. Brace", "type": "Person", "same": false}
-{"a": "ON Semiconductor Romania S.R.L.", "b": "ON Semiconductor SSMP Philippines Corporation", "type": "Company", "same": false}
-{"a": "ON Semiconductor Ireland Research and Design Limited", "b": "ON Semiconductor Technology India Private Limited", "type": "Company", "same": false}
-{"a": "AMD Ryzen\u2122 AI", "b": "AMD PRO A-Series processors", "type": "Product", "same": false}
-{"a": "Mr. Durn", "b": "Mr. Doogue", "type": "Person", "same": false}
-{"a": "NXP Semicondu...", "b": "NXP Semiconductors Korea Ltd.", "type": "Company", "same": false}
-{"a": "Microchip Technology", "b": "Microsemi Solutions UK Limited", "type": "Company", "same": false}
-{"a": "the United Kingdom", "b": "United\u00a0States", "type": "Location", "same": false}
-{"a": "Advanced Micro Devices Products (China) China Co., Ltd.", "b": "Advanced Micro Devices CH GmbH", "type": "Company", "same": false}
-{"a": "John M. Dineen", "b": "John Forsyth", "type": "Person", "same": false}
-{"a": "Variscale Services & Engineering Singapore Pte. Singapore Ltd.", "b": "Variscale Services & Engineering Taiwan Inc.", "type": "Company", "same": false}
-{"a": "Texas Instruments Austin Incorporated", "b": "Texas Instruments Korea Limited", "type": "Company", "same": false}
-{"a": "Mr. Thomas", "b": "Mr. Terry", "type": "Person", "same": false}
-{"a": "Entegris India private Ltd.", "b": "Entegris Malaysia Sdn. Bhd.", "type": "Company", "same": false}
-{"a": "Texas Instruments Logistics Malaysia Sdn. Bhd.", "b": "Texas Instruments Taiwan Limited", "type": "Company", "same": false}
-{"a": "TERADYNE, INC", "b": "Teradyne (New Zealand) Holdings Ltd.", "type": "Company", "same": false}
-{"a": "Qorvo Shanghai Ltd.", "b": "Qorvo UK Limited", "type": "Company", "same": false}
-{"a": "Robert Rango", "b": "Robert Bruggeworth", "type": "Person", "same": false}
-{"a": "Microchip Technology Incorporated", "b": "Microsemi SoC Corp.", "type": "Company", "same": false}
-{"a": "Mr. Blegen", "b": "Mr. Brace", "type": "Person", "same": false}
-{"a": "Intel Ireland Holdings (U.S.) LLC", "b": "Intel Corporation (Intel)", "type": "Company", "same": false}
-{"a": "TEXAS INSTRUMENTS INC", "b": "Texas Instruments Electronics Malaysia Sdn. Bhd.", "type": "Company", "same": false}
-{"a": "MONOLITHIC POWER SYSTEMS, INC.", "b": "Monolithic Power Systems (Singapore) Pte. Ltd.", "type": "Company", "same": false}
-{"a": "ON Semiconductor (Thailand) Co. Ltd.", "b": "ON Semiconductor Technology India Private Limited", "type": "Company", "same": false}
-{"a": "Mr. Chapman", "b": "Mr. Conrad", "type": "Person", "same": false}
-{"a": "Malvern, PA", "b": "Malvern, PA 19355", "type": "Location", "same": true}
-{"a": "Marvell Semiconductor Canada Inc.", "b": "Marvell Technology (Chengdu), Ltd.", "type": "Company", "same": false}
-{"a": "Texas Instruments Espa\u00f1a, S.A. Unipersonal", "b": "Texas Instruments Taiwan Limited", "type": "Company", "same": false}
-{"a": "ON SEMICONDUCTOR CORP", "b": "ON Semiconductor Philippines, Inc.", "type": "Company", "same": false}
-{"a": "Ms. Taylor", "b": "Maryann Turcke", "type": "Person", "same": false}
-{"a": "Mr. Beyer", "b": "Ms. Bruner", "type": "Person", "same": false}
-{"a": "Lam Research (H.K.) Limited", "b": "Lam Research Korea LLC YH", "type": "Company", "same": false}
-{"a": "AMD", "b": "Advanced Micro Devices, Inc.", "type": "Company", "same": true}
-{"a": "AMD", "b": "Advanced Micro Devices", "type": "Company", "same": true}
-{"a": "Advanced Micro Devices Inc.", "b": "Advanced Micro Devices, Inc.", "type": "Company", "same": true}
-{"a": "TSMC", "b": "Taiwan Semiconductor Manufacturing Company", "type": "Company", "same": true}
-{"a": "TSMC", "b": "Taiwan Semiconductor Manufacturing Company Limited", "type": "Company", "same": true}
-{"a": "NXP", "b": "NXP Semiconductors", "type": "Company", "same": true}
-{"a": "Taiwan Semiconductor Manufacturing Co.", "b": "Taiwan Semiconductor Manufacturing Company Limited", "type": "Company", "same": true}
-{"a": "Advanced Micro Devices, Inc.", "b": "Advanced Energy Industries, Inc.", "type": "Company", "same": false}
+{"a": "Qualcomm Auto Limited", "b": "Qualcomm CDMA Technologies", "type": "Company", "same": false, "source": "hand"}
+{"a": "TSMC Arizona", "b": "TSMC Ltd.", "type": "Company", "same": false, "source": "hand"}
+{"a": "Xilinx Development Corporation(1)", "b": "Xilinx Technology Shanghai China Limited", "type": "Company", "same": false, "source": "hand"}
+{"a": "AMD Instinct MI350 Series GPUs", "b": "AMD Radeon™ PRO V Series", "type": "Product", "same": false, "source": "hand"}
+{"a": "AMD Ryzen PRO solutions", "b": "AMD Radeon™ PRO V Series", "type": "Product", "same": false, "source": "hand"}
+{"a": "Xilinx, Inc.", "b": "Xilinx Armenia LLC(1)", "type": "Company", "same": false, "source": "hand"}
+{"a": "Texas Instruments, Incorporated", "b": "Texas Instruments Hungary Korlatolt Felelossegu Tarsasag", "type": "Company", "same": false, "source": "hand"}
+{"a": "Texas Instruments Business Expansion GmbH", "b": "Texas Instruments Semiconductor Technologies PRC (Shanghai) Co., Ltd.", "type": "Company", "same": false, "source": "hand"}
+{"a": "Applied Materials Canada, Inc.", "b": "Applied Materials Finland International Finland Oy", "type": "Company", "same": false, "source": "hand"}
+{"a": "Texas Instruments (Shanghai) Co., Ltd.", "b": "Texas Instruments Romania S.R.L.", "type": "Company", "same": false, "source": "hand"}
+{"a": "ON Semiconductor France SAS", "b": "ON Semiconductor Leasing, LLC", "type": "Company", "same": false, "source": "hand"}
+{"a": "Paul A. Mascarenas", "b": "Paul V. Walsh, Jr.", "type": "Person", "same": false, "source": "hand"}
+{"a": "Applied Materials UK Limited", "b": "Applied Materials Korea Ltd.", "type": "Company", "same": false, "source": "hand"}
+{"a": "QUALCOMM India Private Limited", "b": "Qualcomm Inc.", "type": "Company", "same": false, "source": "hand"}
+{"a": "ON Semiconductor Adria d.o.o.", "b": "ON Semiconductor Benelux B.V.", "type": "Company", "same": false, "source": "hand"}
+{"a": "Skyworks Ireland Limited", "b": "Skyworks Solutions Canada Inc.", "type": "Company", "same": false, "source": "hand"}
+{"a": "Xilinx Armenia LLC(1)", "b": "Xilinx NI Limited", "type": "Company", "same": false, "source": "hand"}
+{"a": "Gregory L. Summe", "b": "GREGORY L. WATERS", "type": "Person", "same": false, "source": "hand"}
+{"a": "Texas Instruments (India) Private Limited", "b": "Texas Instruments Romania S.R.L.", "type": "Company", "same": false, "source": "hand"}
+{"a": "LED Products", "b": "LED driver products", "type": "Product", "same": false, "source": "hand"}
+{"a": "AMD Ryzen 8000 Series", "b": "AMD Ryzen PRO 200 Series mobile processors", "type": "Product", "same": false, "source": "hand"}
+{"a": "ALLEGRO MICROSYSTEMS, INC.", "b": "Allegro MicroSystems Ireland Ltd", "type": "Company", "same": false, "source": "hand"}
+{"a": "Mr. Brannan", "b": "Mr. Bock", "type": "Person", "same": false, "source": "hand"}
+{"a": "ADVANCED MICRO DEVICES INC", "b": "Advanced Micro Devices (Shanghai) Co., Ltd.(9)", "type": "Company", "same": false, "source": "hand"}
+{"a": "Texas Instruments Romania S.R.L.", "b": "Texas Instruments, Inc.", "type": "Company", "same": false, "source": "hand"}
+{"a": "Xilinx Technology Shanghai Limited(8)", "b": "Xilinx AB", "type": "Company", "same": false, "source": "hand"}
+{"a": "Intel Electronics Ltd.", "b": "Intel Products Vietnam Co., Ltd.", "type": "Company", "same": false, "source": "hand"}
+{"a": "Mr. Beyer", "b": "Mr. Bunker", "type": "Person", "same": false, "source": "hand"}
+{"a": "Maxim Integrated Products Asia Limited", "b": "Maxim India Integrated Circuit Design Private Limited", "type": "Company", "same": false, "source": "hand"}
+{"a": "Marvell Technology Group Ltd", "b": "Marvell Argentina S.A.U.", "type": "Company", "same": false, "source": "hand"}
+{"a": "Mr. Harding", "b": "Mr. Henry", "type": "Person", "same": false, "source": "hand"}
+{"a": "Ms. Spradley", "b": "Mr. Seifert", "type": "Person", "same": false, "source": "hand"}
+{"a": "AMD Instinct MI350 Series GPUs", "b": "AMD Radeon PRO family", "type": "Product", "same": false, "source": "hand"}
+{"a": "AMD Radeon™ PRO V families", "b": "AMD Ryzen PRO 200 Series mobile processors", "type": "Product", "same": false, "source": "hand"}
+{"a": "NXP Philippines, Inc.", "b": "NXP Semiconductors Nordic AB", "type": "Company", "same": false, "source": "hand"}
+{"a": "KLA Corporation UK Ltd", "b": "KLA-Tencor Italy S.R.L.", "type": "Company", "same": false, "source": "hand"}
+{"a": "APPLIED MATERIALS INC /DE", "b": "Applied Materials France S.a.r.l.", "type": "Company", "same": false, "source": "hand"}
+{"a": "Mark E. Jensen", "b": "Mark D. Papermaster", "type": "Person", "same": false, "source": "hand"}
+{"a": "MARIYA TRICKETT", "b": "Maryann Turcke", "type": "Person", "same": false, "source": "hand"}
+{"a": "AMD Ryzen Threadripper™", "b": "AMD Ryzen Embedded Series processors", "type": "Product", "same": false, "source": "hand"}
+{"a": "AMD Embedded Radeon graphics", "b": "AMD R Series", "type": "Product", "same": false, "source": "hand"}
+{"a": "Lam Research Semiconductor\n (Shanghai) Co.", "b": "Lam Research Service Co., Ltd.", "type": "Company", "same": false, "source": "hand"}
+{"a": "Applied Materials WEB Coating GmbH", "b": "Applied Materials Ireland Limited", "type": "Company", "same": false, "source": "hand"}
+{"a": "NXP Semiconductors (Shanghai) Co., Ltd.", "b": "NXP India Pvt. Ltd.", "type": "Company", "same": false, "source": "hand"}
+{"a": "AMD Radeon PRO family", "b": "AMD Instinct MI350X Series GPUs", "type": "Product", "same": false, "source": "hand"}
+{"a": "Marvell eSilicon LLC", "b": "Marvell Technology (Chengdu), Ltd.", "type": "Company", "same": false, "source": "hand"}
+{"a": "Qorvo Belgium NV", "b": "Qorvo Utrecht B.V.", "type": "Company", "same": false, "source": "hand"}
+{"a": "ON Semiconductor Ireland Research and Design Limited", "b": "ON Semiconductor Slovakia, a.s.", "type": "Company", "same": false, "source": "hand"}
+{"a": "Mr. Brown", "b": "Mr. Brace", "type": "Person", "same": false, "source": "hand"}
+{"a": "ON Semiconductor Romania S.R.L.", "b": "ON Semiconductor SSMP Philippines Corporation", "type": "Company", "same": false, "source": "hand"}
+{"a": "ON Semiconductor Ireland Research and Design Limited", "b": "ON Semiconductor Technology India Private Limited", "type": "Company", "same": false, "source": "hand"}
+{"a": "AMD Ryzen™ AI", "b": "AMD PRO A-Series processors", "type": "Product", "same": false, "source": "hand"}
+{"a": "Mr. Durn", "b": "Mr. Doogue", "type": "Person", "same": false, "source": "hand"}
+{"a": "NXP Semicondu...", "b": "NXP Semiconductors Korea Ltd.", "type": "Company", "same": false, "source": "hand"}
+{"a": "Microchip Technology", "b": "Microsemi Solutions UK Limited", "type": "Company", "same": false, "source": "hand"}
+{"a": "the United Kingdom", "b": "United States", "type": "Location", "same": false, "source": "hand"}
+{"a": "Advanced Micro Devices Products (China) China Co., Ltd.", "b": "Advanced Micro Devices CH GmbH", "type": "Company", "same": false, "source": "hand"}
+{"a": "John M. Dineen", "b": "John Forsyth", "type": "Person", "same": false, "source": "hand"}
+{"a": "Variscale Services & Engineering Singapore Pte. Singapore Ltd.", "b": "Variscale Services & Engineering Taiwan Inc.", "type": "Company", "same": false, "source": "hand"}
+{"a": "Texas Instruments Austin Incorporated", "b": "Texas Instruments Korea Limited", "type": "Company", "same": false, "source": "hand"}
+{"a": "Mr. Thomas", "b": "Mr. Terry", "type": "Person", "same": false, "source": "hand"}
+{"a": "Entegris India private Ltd.", "b": "Entegris Malaysia Sdn. Bhd.", "type": "Company", "same": false, "source": "hand"}
+{"a": "Texas Instruments Logistics Malaysia Sdn. Bhd.", "b": "Texas Instruments Taiwan Limited", "type": "Company", "same": false, "source": "hand"}
+{"a": "TERADYNE, INC", "b": "Teradyne (New Zealand) Holdings Ltd.", "type": "Company", "same": false, "source": "hand"}
+{"a": "Qorvo Shanghai Ltd.", "b": "Qorvo UK Limited", "type": "Company", "same": false, "source": "hand"}
+{"a": "Robert Rango", "b": "Robert Bruggeworth", "type": "Person", "same": false, "source": "hand"}
+{"a": "Microchip Technology Incorporated", "b": "Microsemi SoC Corp.", "type": "Company", "same": false, "source": "hand"}
+{"a": "Mr. Blegen", "b": "Mr. Brace", "type": "Person", "same": false, "source": "hand"}
+{"a": "Intel Ireland Holdings (U.S.) LLC", "b": "Intel Corporation (Intel)", "type": "Company", "same": false, "source": "hand"}
+{"a": "TEXAS INSTRUMENTS INC", "b": "Texas Instruments Electronics Malaysia Sdn. Bhd.", "type": "Company", "same": false, "source": "hand"}
+{"a": "MONOLITHIC POWER SYSTEMS, INC.", "b": "Monolithic Power Systems (Singapore) Pte. Ltd.", "type": "Company", "same": false, "source": "hand"}
+{"a": "ON Semiconductor (Thailand) Co. Ltd.", "b": "ON Semiconductor Technology India Private Limited", "type": "Company", "same": false, "source": "hand"}
+{"a": "Mr. Chapman", "b": "Mr. Conrad", "type": "Person", "same": false, "source": "hand"}
+{"a": "Malvern, PA", "b": "Malvern, PA 19355", "type": "Location", "same": true, "source": "hand"}
+{"a": "Marvell Semiconductor Canada Inc.", "b": "Marvell Technology (Chengdu), Ltd.", "type": "Company", "same": false, "source": "hand"}
+{"a": "Texas Instruments España, S.A. Unipersonal", "b": "Texas Instruments Taiwan Limited", "type": "Company", "same": false, "source": "hand"}
+{"a": "ON SEMICONDUCTOR CORP", "b": "ON Semiconductor Philippines, Inc.", "type": "Company", "same": false, "source": "hand"}
+{"a": "Ms. Taylor", "b": "Maryann Turcke", "type": "Person", "same": false, "source": "hand"}
+{"a": "Mr. Beyer", "b": "Ms. Bruner", "type": "Person", "same": false, "source": "hand"}
+{"a": "Lam Research (H.K.) Limited", "b": "Lam Research Korea LLC YH", "type": "Company", "same": false, "source": "hand"}
+{"a": "AMD", "b": "Advanced Micro Devices, Inc.", "type": "Company", "same": true, "source": "hand"}
+{"a": "TSMC", "b": "Taiwan Semiconductor Manufacturing Company", "type": "Company", "same": true, "source": "hand"}
+{"a": "NXP", "b": "NXP Semiconductors", "type": "Company", "same": true, "source": "hand"}
+{"a": "Advanced Micro Devices, Inc.", "b": "Advanced Energy Industries, Inc.", "type": "Company", "same": false, "source": "hand"}
+{"a": "VLSI Technology LLC", "b": "VLSI", "type": "Company", "same": true, "source": "alias-declaration"}
+{"a": "Media Content Protection", "b": "MCP", "type": "Company", "same": true, "source": "alias-declaration"}
+{"a": "Qualcomm Technologies, Inc.", "b": "QTI", "type": "Company", "same": true, "source": "alias-declaration"}
+{"a": "General Electric Company", "b": "GE", "type": "Company", "same": true, "source": "alias-declaration"}
+{"a": "Hewlett Packard Enterprise Company", "b": "HPE", "type": "Company", "same": true, "source": "alias-declaration"}
+{"a": "The Vanguard Group, Inc.", "b": "Vanguard", "type": "Company", "same": true, "source": "alias-declaration"}
+{"a": "Varian Semiconductor Equipment Associates, Inc.", "b": "Varian", "type": "Company", "same": true, "source": "alias-declaration"}
+{"a": "Novellus Systems, Inc.", "b": "Novellus", "type": "Company", "same": true, "source": "alias-declaration"}
+{"a": "Agilent Technologies", "b": "Agilent", "type": "Company", "same": true, "source": "alias-declaration"}
+{"a": "Analog Devices, Inc.", "b": "ADI", "type": "Company", "same": true, "source": "alias-declaration"}
+{"a": "Maxim Integrated Products, Inc.", "b": "Maxim", "type": "Company", "same": true, "source": "alias-declaration"}
+{"a": "Celestial AI, Inc.", "b": "Celestial", "type": "Company", "same": true, "source": "alias-declaration"}
+{"a": "XConn Technologies Holdings, Ltd.", "b": "XConn", "type": "Company", "same": true, "source": "alias-declaration"}
+{"a": "Cisco Systems, Inc.", "b": "Cisco", "type": "Company", "same": true, "source": "alias-declaration"}
+{"a": "Freescale Semiconductor Inc.", "b": "Freescale", "type": "Company", "same": true, "source": "alias-declaration"}
+{"a": "European Semiconductor Manufacturing Company", "b": "ESMC", "type": "Company", "same": true, "source": "alias-declaration"}
+{"a": "European Investment Bank", "b": "EIB", "type": "Company", "same": true, "source": "alias-declaration"}
+{"a": "EY Accountants B.V.", "b": "EY", "type": "Company", "same": true, "source": "alias-declaration"}
+{"a": "Infineon Technologies AG", "b": "Infineon", "type": "Company", "same": true, "source": "alias-declaration"}
+{"a": "Arrow Electronics", "b": "Arrow", "type": "Company", "same": true, "source": "alias-declaration"}
+{"a": "Microchip Technology Incorporated", "b": "Microchip", "type": "Company", "same": true, "source": "alias-declaration"}
+{"a": "Samsung Electronics Co., Ltd.", "b": "Samsung", "type": "Company", "same": true, "source": "alias-declaration"}
+{"a": "Skyworks Solutions, Inc.", "b": "Skyworks", "type": "Company", "same": true, "source": "alias-declaration"}
+{"a": "Quantifi Photonics", "b": "Quantifi", "type": "Company", "same": true, "source": "alias-declaration"}
+{"a": "QED Technologies International, Inc.", "b": "QED", "type": "Company", "same": true, "source": "alias-declaration"}
+{"a": "MACOM Technology Solutions Holdings, Inc.", "b": "MACOM", "type": "Company", "same": true, "source": "alias-declaration"}
+{"a": "Computershare Trust Company, N.A.", "b": "Computershare", "type": "Company", "same": true, "source": "alias-declaration"}
+{"a": "Semiconductor Manufacturing International Corporation", "b": "SMIC", "type": "Company", "same": true, "source": "alias-declaration"}
+{"a": "United Microelectronics Corporation", "b": "UMC", "type": "Company", "same": true, "source": "alias-declaration"}
+{"a": "Sanken Electric Co., Ltd.", "b": "Sanken", "type": "Company", "same": true, "source": "alias-declaration"}
+{"a": "Sony Group Corporation", "b": "Sony", "type": "Company", "same": true, "source": "alias-declaration"}
+{"a": "Marvell Technology, Inc.", "b": "Marvell", "type": "Company", "same": true, "source": "alias-declaration"}
+{"a": "IBM Consulting", "b": "IBM", "type": "Company", "same": true, "source": "alias-declaration"}
+{"a": "NVIDIA CORP", "b": "Mellanox Technologies, Ltd", "type": "Company", "same": false, "source": "ex21-parent"}
+{"a": "Intel Capital Corporation", "b": "Arizona Fab LLC", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Intel Ireland Holdings (U.S.) LLC", "b": "Mobileye Global Inc.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Grange Newco LLC", "b": "Intel Semiconductor (Dalian) Ltd.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Intel Electronics Ltd.", "b": "Intel Products (Chengdu) Ltd.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Intel Asia Holding Limited", "b": "Arizona Fab LLC", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "NuVia, Inc.", "b": "RF360 Singapore Pte. Ltd.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Micron Idaho Semiconductor Manufacturing (Triton) LLC", "b": "Micron Technology Taiwan, Inc.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Micron Semiconductor Asia, LLC", "b": "Micron Technology Taiwan, Inc.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Applied Materials Asia-Pacific, LLC", "b": "Applied Materials Israel Ltd.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Applied Materials India Private Limited", "b": "Applied Ventures ITIC Innovation Fund, Delaware L.P.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Applied Ventures, LLC", "b": "Applied Materials Korea Innovation and Korea Technology, LLC", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Varian Semiconductor Equipment Associates, Inc.", "b": "Applied Materials Straits Holdings LLC", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Applied Materials (China) Holdings, Ltd.", "b": "Applied Materials Finland International Finland Oy", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Applied Materials Luxembourg 2 S.à r.l.", "b": "Picosun USA LLC", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Applied Ventures ITIC Innovation Fund GP, LLC", "b": "Applied Ventures Innovation Fund II, Delaware L.P.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Applied Materials Finland International Finland Oy", "b": "Valaya Pte. Ltd.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Perceptive Engineering Pte. Ltd.", "b": "Perceptive Engineering Limited", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "MDLSoft LLC", "b": "Perceptive Engineering Limited", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Applied Materials Costa Rica Sociedad De Costa Rica Responsibilidad Limitada", "b": "Picosun Oy", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Applied Materials Netherlands B.V.", "b": "Applied Materials WEB Coating GmbH", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "MDLSoft LLC", "b": "Mecatronix GmbH", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Valaya Enterprise LLC", "b": "Applied Materials Japan, Inc.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Applied Materials WEB Coating GmbH", "b": "MDLab S.r.l. in liquidation", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Applied Materials Ireland Limited", "b": "Picosun (Suzhou) Nanotechnology Co., Ltd.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Applied Materials Verwaltung GmbH", "b": "Picosun (Suzhou) Nanotechnology Co., Ltd.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Lam Research Salzburg GmbH", "b": "Lam Research (Ireland) Limited", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Novellus Systems International, LLC", "b": "Lam Research Taiwan Technology Co, Ltd.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Coventor, Inc.", "b": "Lam Research International Holding\n Company", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Lam Research (India) Private Limited\n Limited", "b": "Silfex India Mfg Private Limited", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Lam Research Malaysia Sdn. Bhd.", "b": "Lam Research Taiwan Technology Co, Ltd.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Anchor Semiconductor, Inc.", "b": "Front Edge Technology Inc.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Belize Holdings, LLC", "b": "KLA-Tencor International Trading (Shanghai) Co., Ltd.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "ECI Technology International, Inc.", "b": "Whiskey Holding Sub, LLC", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Front Edge Technology Inc.", "b": "Orbotech Electronics (Shenzhen) Co., Ltd", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "KLA Aleris Holding, LLC", "b": "KLA-Tencor Ireland Ltd.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "KLA-Tencor Asia-Pac Distribution Corporation", "b": "KLA-Tencor (Thailand) Limited", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "KLA-Tencor International Corporation", "b": "Frontline P.C.B. Solutions Ltd.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "KT Venture Group II, L.L.C.", "b": "Anchor (Shanghai) Semiconductor Inc.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "KT Venture Management, L.L.C.", "b": "Capres A/S", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "VLSI Standards, Inc.", "b": "KLA-Tencor (Malaysia) Sdn Bhd", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Zeta Instruments, Inc.", "b": "KLA-Tencor GmbH", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Capres A/S", "b": "Lakers Holding Company APS", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "ICOS Vision Systems Corporation", "b": "KLA-Tencor Corporation (Cayman) Limited, Cayman Islands", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "KLA Finco Pte. Ltd.", "b": "Orbotech Holding GmbH", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "KLA-Tencor (Thailand) Limited", "b": "Orbotech Electronics (Shenzhen) Co., Ltd", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "KLA-Tencor Corporation (Israel)", "b": "KLA-Tencor Corporation Holding (1987) Ltd.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "KLA-Tencor GmbH", "b": "Orbotech Asia Ltd", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "KLA-Tencor Japan, Ltd.", "b": "KLA-Tencor MIE GmbH", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "KLA Sales & Service (India) Private Limited", "b": "Orbotech Technology Ventures Ltd.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "TEXAS INSTRUMENTS INC", "b": "National Semiconductor International B.V.", "type": "Company", "same": false, "source": "ex21-parent"}
+{"a": "Algorex Inc.", "b": "Texas Instruments Gesellschaft m.b.H.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "ASIC II Limited", "b": "Texas Instruments Santa Rosa Incorporated", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Burr-Brown International Holding Corporation", "b": "National Semiconductor International B.V.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Energy Recommerce Inc.", "b": "Texas Instruments Holland B.V.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "innoCOMM wireless", "b": "Texas Instruments Singapore (Pte) Limited", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Mediamatics, Inc.", "b": "Texas Instruments CZ, s.r.o.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "National Acquisition Sub, Inc.", "b": "Texas Instruments Palo Alto Incorporated", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "National Semiconductor Corporation", "b": "Texas Instruments Canada Limited", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "National Semiconductor International B.V.", "b": "Texas Instruments Richardson LLC", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "PT Texas Instruments Indonesia", "b": "Texas Instruments EMEA Sales GmbH", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Telogy Networks, Inc.", "b": "Texas Instruments Sweden AB", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Texas Instruments (Philippines) LLC", "b": "Texas Instruments Lehigh Valley Incorporated", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Texas Instruments Asia Limited", "b": "Texas Instruments Finland Oy", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Texas Instruments Australia Pty Limited", "b": "Texas Instruments China Sales Limited", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Texas Instruments Business Expansion GmbH", "b": "Texas Instruments Taiwan Limited", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Texas Instruments China Sales Limited", "b": "Texas Instruments Singapore (Pte) Limited", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Texas Instruments de Mexico, S. de R.L. de C.V.", "b": "Texas Instruments Semicondutores e Tecnologias Brazil Ltda.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Texas Instruments Deutschland GmbH", "b": "Texas Instruments Sweden AB", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Texas Instruments España, S.A. Unipersonal", "b": "Texas Instruments Federal LLC", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Texas Instruments Finland Oy", "b": "Texas Instruments Korea Limited", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Texas Instruments Gesellschaft m.b.H.", "b": "Texas Instruments Sunnyvale Incorporated", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Texas Instruments Hong Kong Limited", "b": "Texas Instruments Northern Virginia Incorporated", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Texas Instruments International Capital Corporation", "b": "Texas Instruments Malaysia Sdn. Bhd.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Texas Instruments Italia S.r.l.", "b": "Texas Instruments Romania S.R.L.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Texas Instruments Logistics Malaysia Sdn. Bhd.", "b": "Texas Instruments Low Power Wireless San Diego LLC", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Texas Instruments Northern Virginia Incorporated", "b": "Texas Instruments Semiconductor Manufacturing PRC (Chengdu) Co., Ltd.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Texas Instruments Santa Rosa Incorporated", "b": "Texas Instruments Vietnam LLC", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Texas Instruments Vietnam LLC", "b": "Unitrode-Maine", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Analog Devices Australia Pty. Ltd.", "b": "Analog Devices Srl Italy", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Maxim Integrated Products GmbH", "b": "Maxim Integrated GmbH", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Maxim Integrated GmbH", "b": "Analog Devices Gen. Trias, Inc.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Maxim Island Holdings Corporation", "b": "Analog Devices International Unlimited Ireland Company", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Icron Technologies Corporation", "b": "Linear Technology Holding LLC", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Analog Devices Limited Egypt LLC", "b": "Linear Technology PTE Ltd", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Trinamic OÜ", "b": "Analog Devices Norway AS", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Maxim Integrated Acquisition GmbH", "b": "Analog Devices, K.K. Japan", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Trinamic Verwaltungsgesellschaft mbH", "b": "Analog Devices, K.K. Japan", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Maxim India Integrated Circuit Design Private Limited", "b": "Analog Devices Nederland, B.V.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Analog Devices India Private Limited", "b": "Analog Devices Romania S.R.L.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Analog Devices Atlantic Unlimited Ireland Company", "b": "Teridian Semiconductor Corp.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Maxim Integrated Products International Ireland Limited", "b": "Analog Devices Sdn Bhd Malaysia", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Linear Technology (Israel) Ltd.", "b": "Maxim Semiconductor Corporation", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Linear Technology KK Japan", "b": "Mikroelektronik Turkey", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Analog Devices Korea, Ltd.", "b": "Phyworks Limited", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Analog Devices Norway AS", "b": "Maxim (I.P.) Enterprise Solutions Philippines Corporation", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Maxim Phil. Land Corporation", "b": "Analog Devices Taiwan Ltd", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Electric Motors Test, S.L.", "b": "Maxim Integrated Products UK Limited", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Phyworks Limited", "b": "Linear Technology Holding LLC", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Cavium India Holdings, LLC", "b": "Marvell Switzerland Sàrl", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Clarice Acquisition Corporation", "b": "Marvell Semiconductor Germany GmbH", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Innovium, Inc.", "b": "Marvell Semiconductor, Inc.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Marvell Argentina S.A.U.", "b": "Marvell Technology (Chengdu), Ltd.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Marvell eSilicon LLC", "b": "Marvell Technology Sweden AB", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Marvell India Private Limited", "b": "Tanzanite Silicon Solutions Inc.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Marvell Netherlands B.V.", "b": "Marvell TechnologyHoldings, Inc.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Marvell Semiconductor Korea, Ltd.", "b": "Marvell Technology (Chengdu), Ltd.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Marvell Taiwan Ltd.", "b": "Marvell Technology (Chengdu), Ltd.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Marvell Technology (Chengdu), Ltd.", "b": "Marvell Technology Poland Sp. z o.o.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Marvell Technology Cayman II", "b": "Marvell Technology Group Ltd.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Marvell Technology Italy S.r.l.", "b": "QLogic International Holdings, Inc.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Marvell Technology Vietnam Limited Liability", "b": "Sicily Merger Sub I, Inc.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "NXP Semiconductors N.V.", "b": "port industrial automation GmbH", "type": "Company", "same": false, "source": "ex21-parent"}
+{"a": "NXP Semiconductors Austria GmbH", "b": "NXP Canada Inc.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "TTTech Auto GmbH", "b": "NXP Semiconductors Switzerland SA", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "NXP Canada Inc.", "b": "NXP Semiconductors Netherlands B.V.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "NXP (Chongqing) Semiconductors Co. Ltd.", "b": "Aviva Semiconductor Private Limited", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Datang NXP Semiconductors Co., Ltd (45.41%)*", "b": "Intoto Software India Pvt. Ltd.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "NXP Semiconductors (Tianjin) Ltd.", "b": "Aviva Semiconductor Private Limited", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "NXP Semiconductors Czech Republic s.r.o.", "b": "NXP Semiconductors México, S. de R.L. de C.V.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "NXP Semiconductors France SAS", "b": "TTTechAuto Spain S.L.U", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "NXP Semiconductors Germany GmbH", "b": "Freescale Semiconductor Holding Limited Liability Company", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "port industrial automation GmbH", "b": "NXP Semiconductors Singapore Pte. Ltd.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "NXP India Pvt. Ltd.", "b": "NXP Japan Ltd.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Aviva Semiconductor Private Limited", "b": "NXP Japan Ltd.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "NXP Semiconductors Korea Ltd.", "b": "Systems on Silicon Manufacturing Company Pte Ltd (61.2%)*", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "NXP Semiconductors Netherlands B.V.", "b": "NXP Philippines, Inc.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "NXP Semiconductors Singapore Pte. Ltd.", "b": "NXP Laboratories UK Ltd.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "NXP Semiconductors Switzerland SA", "b": "Omniphy, Inc.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "ON SEMICONDUCTOR CORP", "b": "ON Design Czech s.r.o.", "type": "Company", "same": false, "source": "ex21-parent"}
+{"a": "AMI Semiconductor Canada Company", "b": "ON Semiconductor Trading (Shanghai) Limited", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Aptina Holdings (Cayman) Inc.", "b": "Leshan-Phoenix Semiconductor Company Limited", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Aptina Imaging Corporation", "b": "ON Semiconductor Trading Sàrl", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Fairchild Semiconductor (Malaysia) Sdn. Bhd.", "b": "ON Semiconductor Adria d.o.o.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Fairchild Semiconductor (Suzhou) Co., Ltd.", "b": "SWIR Vision Systems, Inc.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Fairchild Semiconductor Hong Kong (Holdings) Limited", "b": "ON Semiconductor Philippines, Inc.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Fairchild Semiconductor Mauritius Ltd.", "b": "ON Semiconductor Austria GmbH", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Fairchild Semiconductor Technology (Beijing) Co., Ltd.", "b": "Hudson Valley Research Park Sewage Works Corporation", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Fairchild Semiconductor Technology (Shanghai) Co., Ltd.", "b": "Semiconductor Components Industries, LLC", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "GTAT Terra Inc.", "b": "Qorvo Philippines Silicon Carbide, Inc.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Hudson Valley Research Park Water-Works Corp.", "b": "ONSEMI SPAIN, S.L.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "ON Assurance Corporation", "b": "Semiconductor Components Industries Singapore Pte Ltd", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "ON Management, LLC", "b": "ON Semiconductor (Shenzhen) Limited", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "ON Semiconductor (Thailand) Co. Ltd.", "b": "ON Semiconductor Korea, Ltd.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "ON Semiconductor Aizu Co., Ltd.", "b": "Semiconductor Components Industries Singapore Pte Ltd", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "ON Semiconductor Canada Trading Corporation", "b": "ON Semiconductor Slovakia, a.s.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "ON Semiconductor France SAS", "b": "ON Semiconductor Shenzhen China (ONSC) Limited", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "ON Semiconductor Japan Holdings Ltd.", "b": "ON Semiconductor Vietnam Company Limited", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "ON Semiconductor Malaysia Sdn. Bhd.", "b": "ON Semiconductor Slovakia, a.s.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "ON Semiconductor Shenzhen China (ONSC) Limited", "b": "Qorvo Philippines Silicon Carbide, Inc.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "ON Semiconductor Trading (Shanghai) Limited", "b": "ON Semiconductor Vietnam Company Limited", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "MICROCHIP TECHNOLOGY INC", "b": "Atmel U.K. Holdings Limited", "type": "Company", "same": false, "source": "ex21-parent"}
+{"a": "Qorvo, Inc.", "b": "Qorvo Germany GmbH", "type": "Company", "same": false, "source": "ex21-parent"}
+{"a": "Amalfi Semiconductor, Inc.", "b": "Qorvo Utrecht B.V.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Qorvo Asia, LLC", "b": "Xemod Incorporated", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Qorvo International Holding, Inc.", "b": "Qorvo Vietnam Company Limited", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Qorvo Oregon, Inc.", "b": "Qorvo Paris", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "RFMD Infrastructure Product Group, Inc.", "b": "Qorvo UK Limited", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "WJ Newco LLC", "b": "Qorvo Finland Oy", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Qorvo Austria GmbH", "b": "Qorvo Ireland Holding Limited", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Qorvo Finland Oy", "b": "Qorvo Toulouse SAS", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Qorvo Semiconductor Private Limited", "b": "Qorvo Toulouse SAS", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Teradyne (Asia) Pte.", "b": "Teradyne Robotics, Inc. (f/k/a MiR Global, Inc.)", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Teradyne de Costa Rica S.R.L.", "b": "Universal Robots A/S", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Teradyne International Holdings B.V.", "b": "Universal Robots Mexico S.A. de C.V.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Teradyne Italia SrL", "b": "Teradyne SAS", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Teradyne Malaysia Sdn. Bhd.", "b": "MiR Robots (Shanghai) Co. Ltd.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Teradyne SAS", "b": "P.L.S.T., Inc. (f/k/a Perception Laminates, Inc.)", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Teradyne Taiwan LLC", "b": "Quantifi Photonics USA Inc.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "P.L.S.T., Inc. (f/k/a Perception Laminates, Inc.)", "b": "LitePoint Corporation", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Lemsys SA", "b": "Teradyne Robotics Germany GmbH", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "LitePoint Technology (Shanghai) Company Ltd.", "b": "Quantifi Photonics New Zealand Limited", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Universal Robots A/S", "b": "Universal Robots (Shanghai) Co. Ltd.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Universal Robots (UK) Ltd", "b": "Quantifi Photonics New Zealand Limited", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "CMC Materials B.V.", "b": "Entegris Ecosys LLC", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "CMC Materials Shanghai Co., Ltd.", "b": "NexPlanar Corporation", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Digital Specialty Chemicals UK Limited", "b": "Nihon Entegris G.K.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Entegris India private Ltd.", "b": "Entegris Pacific Ltd.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Entegris Ireland Unlimited Company", "b": "Entegris Pacific Pte., Ltd", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Entegris Pacific Ltd.", "b": "Entegris Pacific Pte., Ltd", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Entegris Specialty Materials, LLC", "b": "Poco Graphite, Inc.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "China MPS International (Shanghai) Ltd.", "b": "M2 Holding, LLC", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "MPS Germany GmbH", "b": "Monolithic Power Spain, S.L.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Silicon Laboratories Finland Oy", "b": "Silicon Laboratories Italy, S.r.l.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Allegro MicroSystems Europe Limited", "b": "LadarSystems, LLC", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "ADVANCED MICRO DEVICES INC", "b": "Advanced Micro Devices Products (China) Co., Ltd.(9)", "type": "Company", "same": false, "source": "ex21-parent"}
+{"a": "AMD Advanced Research, LLC", "b": "Xilinx Technology Shanghai Limited(8)", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "AMD Far East Ltd.", "b": "AMD International Sales & Service, Ltd.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "AMD International Sales & Service, Ltd.", "b": "ATI International SRL(*)", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "AMD Research Technologies, Inc.", "b": "Xilinx SARL(1)", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Lapland NewCo LLC", "b": "Chengdu Haiguang Integrated Circuit Design Co., Ltd.(11)", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "MK One Technologies, Inc.", "b": "Chengdu Haiguang Integrated Circuit Design Co., Ltd.(11)", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Silexica, Inc.(1)", "b": "Solarflare Communications, Inc.(1)", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Xilinx Armenia LLC(1)", "b": "Brium Inc. Europe(31)", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "AMD South America Ltda.(7)", "b": "Xilinx Technology Beijing Limited(13)", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Chengdu Haiguang Integrated Circuit Design Co., Ltd.(11)", "b": "Xilinx Technology Beijing Limited(13)", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "ADVANCED MICRO DEVICES INC", "b": "Xilinx Sales International Pte. Ltd.", "type": "Company", "same": false, "source": "ex21-parent"}
+{"a": "Advanced Micro Devices (China) Co., China Ltd.", "b": "AMD India Private Limited", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Advanced Micro Devices (Shanghai) Co., China Ltd.", "b": "Advanced Micro Devices CH GmbH", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Chengdu Haiguang Microelectronics China Technology Co., Ltd.", "b": "Advanced Micro Devices Global Services (M) Sdn. Bhd. Bhd.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Suzhou TF-AMD Semiconductor Co., China Ltd.", "b": "Brium Inc. Europe", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Xilinx Technology Beijing China Limited", "b": "Combient Mix AB", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Silo AI Denmark Aps", "b": "Xilinx Singapore Holding Pte. Ltd.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Silo GenAI Oy", "b": "Xilinx NI Limited", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Xilinx SARL", "b": "AMD India Private Limited", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Xilinx Dresden GmbH i.L.", "b": "ATI Technologies (L) Inc.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Variscale Services & Engineering HK Limited", "b": "Xilinx Holding Three Pte. Ltd. i.L.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "AMD India Private Limited", "b": "Xilinx NI Limited", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Xilinx India Technology Services Private India Limited", "b": "Advanced Micro Devices Global Services (M) Sdn. Bhd. Bhd.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Xilinx Ireland Unlimited Company", "b": "Xilinx AB", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Variscale Services & Engineering Japan G.K.", "b": "Variscale Services & Engineering Singapore Pte. Singapore Ltd.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Advanced Micro Devices Global Services (M) Sdn. Bhd. Bhd.", "b": "Xilinx Asia Pacific Pte. Ltd.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "TF AMD Micro Electronics (Penang) Sdn. Bhd.", "b": "Advanced Micro Devices CH GmbH", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Advanced Micro Devices (Poland) sp. z o.o.", "b": "Combient Mix AB", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Xilinx Asia Pacific Pte. Ltd.", "b": "Xilinx Singapore Holding Pte. Ltd.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Combient Mix AB", "b": "Variscale Services & Engineering Taiwan Inc.", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "SKYWORKS SOLUTIONS, INC.", "b": "Skyworks Solutions Oy", "type": "Company", "same": false, "source": "ex21-parent"}
+{"a": "Skyworks Hungary Kft", "b": "Skyworks Semiconductor", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Skyworks Semiconductor", "b": "Skyworks Solutions Worldwide, Inc., Taiwan", "type": "Company", "same": false, "source": "ex21-sibling"}
+{"a": "Skyworks Solutions (Hong Kong) Limited", "b": "Skyworks Solutions Korea Limited", "type": "Company", "same": false, "source": "ex21-sibling"}

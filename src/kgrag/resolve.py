@@ -27,11 +27,44 @@ from typing import Any, Iterable
 import numpy as np
 
 from . import fireworks, jsonl
-from .config import ENTITIES, EVAL, EXTRACTIONS, OVERRIDES
+from .config import CHUNKS, ENTITIES, EVAL, EXTRACTIONS, OVERRIDES
 
-TAU = 0.88           # cosine threshold, from `kgrag sweep` on eval/resolution_pairs.jsonl (F1=0.769, plateau 0.88-0.96)
-JACCARD_FLOOR = 0.5
+#: Both from `kgrag sweep` over eval/resolution_pairs.jsonl. F1 sits on a flat 0.930
+#: plateau across tau 0.86-0.90 at floor 0.67-0.75, so these are the middle of a stable
+#: region rather than a single tuned peak.
+TAU = 0.88
+JACCARD_FLOOR = 0.67
+#: The prefix rule leans on the lexical anchor (a shared leading token), so it needs far
+#: less from the embedding than the fuzzy rule does.
+PREFIX_COSINE = 0.55
 MIN_ACRONYM = 2
+
+#: Foreign legal forms `LEGAL_SUFFIXES` deliberately does not strip. When one of these is
+#: what separates two otherwise-identical names, it separates two *incorporations*:
+#: "Skyworks Solutions, Inc." and "Skyworks Solutions Oy" are a US parent and its Finnish
+#: subsidiary, and Exhibit 21 lists them precisely because they are different entities.
+FOREIGN_LEGAL_FORMS = frozenset(
+    "oy oyj ab as aps sas spa srl sarl pte sdn bhd kk gk kft doo bv ug kg cv lda ltda "
+    "pty pt zoo sro sl unipersonal".split()
+)
+
+#: Place words too generic to imply a separate entity on their own.
+GEO_STOPWORDS = frozenset("the of and new north south east west central".split())
+
+#: The geography half of `entity_markers()` is derived from the corpus, which means it is
+#: empty on a fresh clone before `kgrag extract` has run. This floor keeps the rule
+#: working anyway: without it the parent/subsidiary block would silently degrade to
+#: nothing and quietly reintroduce the self-loop bug it exists to prevent.
+GEO_CORE = frozenset(
+    "america american argentina asia australia austria belgium bermuda brasil brazil "
+    "britain canada cayman chengdu chile china colombia czech denmark deutschland dublin "
+    "egypt emea england europe european finland france french german germany greece "
+    "holland hongkong hungary iberia india indonesia ireland israel italia italy japan "
+    "kong korea luxembourg malaysia malta mexico nederland netherlands nordic norway "
+    "pacific philippines poland portugal prc romania russia scotland shanghai shenzhen "
+    "singapore slovakia slovenia spain suisse sweden swiss switzerland taiwan thailand "
+    "turkey uk ukraine vietnam wales".split()
+)
 
 #: Legal form only. It is tempting to also strip industry words - "technology",
 #: "solutions", "semiconductor" - but in this corpus those are part of the name:
@@ -71,6 +104,45 @@ def acronym(normalized: str) -> str:
     return "".join(p[0] for p in parts) if len(parts) > 1 else ""
 
 
+def raw_acronym(surface: str) -> str:
+    """Initials taken *before* legal-form stripping.
+
+    `normalize()` removes "Company", so `acronym()` of Taiwan Semiconductor Manufacturing
+    Company is "tsm" and can never match TSMC — the case decisions.md settles with a hand
+    override. Taking initials from the raw surface form recovers TSMC, and with it ESMC,
+    SMIC, UMC and ADI, which all borrow their last letter from a stripped legal word.
+    """
+    words = re.sub(r"[^\w\s]", " ", surface.casefold()).split()
+    return "".join(w[0] for w in words if w) if len(words) > 1 else ""
+
+
+_MARKERS: frozenset[str] | None = None
+
+
+def entity_markers() -> frozenset[str]:
+    """Tokens that mark a *separate* legal entity when they are what differs.
+
+    Two company names that differ only by a place are a parent and its local subsidiary,
+    not two spellings of one company — "Qorvo, Inc." vs "Qorvo Germany GmbH". That is the
+    single strongest signal separating the two: measured over the labelled pairs, the
+    tokens distinguishing `same=false` pairs are overwhelmingly geographic (shanghai,
+    india, ireland, korea) while those distinguishing `same=true` pairs are industry
+    descriptors (technologies, manufacturing, solutions).
+
+    The geography half is derived from the corpus's own `Location` mentions rather than a
+    hand-written country list, so it tracks the corpus instead of rotting beside it.
+    """
+    global _MARKERS
+    if _MARKERS is None:
+        geo: set[str] = set()
+        for row in jsonl.read(EXTRACTIONS):  # yields nothing if the file is absent
+            for mention in row["mentions"]:
+                if mention["type"] == "Location":
+                    geo |= tokens(normalize(mention["name"]))
+        _MARKERS = frozenset((geo - GEO_STOPWORDS) | FOREIGN_LEGAL_FORMS | GEO_CORE)
+    return _MARKERS
+
+
 def jaccard(a: frozenset[str], b: frozenset[str]) -> float:
     return len(a & b) / len(a | b) if a or b else 0.0
 
@@ -85,6 +157,11 @@ def blocking_keys(normalized: str, surface: str) -> set[str]:
     keys = {f"exact:{normalized}", f"pre:{normalized[:4]}"}
     if initials := acronym(normalized):
         keys.add(f"acr:{initials}")
+    # Without this the raw-acronym rule in matches() could never fire: "tsmc" blocks on
+    # acr:tsmc while "taiwan semiconductor manufacturing" blocks on acr:tsm, so the pair
+    # is never generated as a candidate in the first place.
+    if raw := raw_acronym(surface):
+        keys.add(f"acr:{raw}")
     # A short all-caps surface form is probably itself an acronym.
     if " " not in normalized and 2 <= len(normalized) <= 6 and surface.isupper():
         keys.add(f"acr:{normalized}")
@@ -116,11 +193,29 @@ def matches(
             return "override" if overrides[key] else None
     if a["norm"] == b["norm"]:
         return "exact"
+
+    # Acronyms are checked before the marker block on purpose: TSMC expands to *Taiwan*
+    # Semiconductor Manufacturing, so a place word is exactly what separates the pair,
+    # and blocking on it would reject the one rule that gets this right.
+    for x, y in ((a, b), (b, a)):
+        if len(x["norm"]) >= MIN_ACRONYM and " " not in x["norm"]:
+            if acronym(y["norm"]) == x["norm"] or raw_acronym(y["surface"]) == x["norm"]:
+                return "acronym"
+
+    if (a["tokens"] ^ b["tokens"]) & entity_markers():
+        return None
+
     if cosine >= TAU and jaccard(a["tokens"], b["tokens"]) >= JACCARD_FLOOR:
         return "embedding"
-    for x, y in ((a, b), (b, a)):
-        if len(x["norm"]) >= MIN_ACRONYM and " " not in x["norm"] and acronym(y["norm"]) == x["norm"]:
-            return "acronym"
+
+    # A filing that says `Cisco Systems, Inc. ("Cisco")` is naming the same company by its
+    # brand. Those share only a leading token, so Jaccard is far below the floor — but the
+    # shared *first* token is a strong anchor once a place word has been ruled out above.
+    if cosine >= PREFIX_COSINE:
+        for x, y in ((a, b), (b, a)):
+            short = x["norm"].split()
+            if len(short) == 1 and len(short[0]) >= 3 and y["norm"].split()[:1] == short:
+                return "prefix"
     return None
 
 
@@ -266,6 +361,110 @@ def write_candidates(limit: int = 80) -> None:
     path = EVAL / "resolution_pairs.jsonl"
     jsonl.write(path, rows)
     print(f"{path}: {len(rows)} candidate pairs written — hand-label 'same' (true/false), trim to ~50")
+
+
+#: A filing that writes `NXP Semiconductors, N.V. ("NXP")` is declaring an alias itself,
+#: which is ground truth for same=true that involves no judgement from me. An Exhibit 21
+#: table is the mirror image: it exists to enumerate *separate legal entities*, so any two
+#: rows are same=false by construction, as is any row against the filer that owns it.
+ALIAS_DEF = re.compile(
+    r"([A-Z][\w&.,'\-]*(?:\s+[A-Z][\w&.,'\-]*){1,6})\s*\(\s*[“\"]?([A-Z][A-Za-z]{1,14})[”\"]?\s*\)"
+)
+
+
+def _declares_alias(full: str, abbr: str) -> bool:
+    """True only if the parenthetical is really an alias, not a role or an aside.
+
+    `Dawn Hudson (Chairperson)` and `Intel, Intel (China)` both match the regex; neither
+    declares an alias. Requiring the short form to be a token of the long one, or its
+    initials, drops those without hand-curating a stoplist.
+    """
+    short = normalize(abbr)
+    if not short:
+        return False
+    if short in tokens(normalize(full)):
+        return True
+    words = re.sub(r"[^\w\s]", " ", full.casefold()).split()
+    return short in {"".join(w[0] for w in words if w), acronym(normalize(full))}
+
+
+def mine_pairs(negatives: int = 220) -> None:
+    """`kgrag mine-pairs` — derive labelled pairs from document structure, not judgement.
+
+    `kgrag candidates` ranks by |cosine - TAU|, which is the right sampler for finding the
+    decision boundary but the wrong one for auditing over-merging: the pairs that actually
+    over-merge (a parent and its own subsidiary) sit far *above* TAU, so that sampler never
+    surfaces them. This mines the two shapes the corpus can label for itself, then merges
+    the result into whatever is already labelled by hand.
+    """
+    chunks = list(jsonl.read(CHUNKS))
+    if not chunks:
+        raise SystemExit("data/chunks.jsonl is empty — run `kgrag chunk` first.")
+    mentions_by_chunk = {r["chunk_id"]: r["mentions"] for r in jsonl.read(EXTRACTIONS)}
+    companies = {
+        m["name"] for ms in mentions_by_chunk.values() for m in ms if m["type"] == "Company"
+    }
+
+    seen: set[tuple[str, str]] = set()
+
+    def make(a: str, b: str, same: bool, source: str) -> dict[str, Any] | None:
+        key = tuple(sorted((normalize(a), normalize(b))))
+        # Equal normalised forms are the same row seen twice through extraction noise
+        # ("... (China) Co., Ltd." vs "... (China) Co., China Ltd."), not a real pair.
+        if key in seen or not key[0] or key[0] == key[1]:
+            return None
+        seen.add(key)
+        return {"a": a, "b": b, "type": "Company", "same": same, "source": source}
+
+    # Preserve existing hand labels — they stay authoritative where they exist.
+    rows: list[dict[str, Any]] = []
+    for pair in jsonl.read(EVAL / "resolution_pairs.jsonl"):
+        if pair.get("same") is None:
+            continue
+        key = tuple(sorted((normalize(pair["a"]), normalize(pair["b"]))))
+        if key in seen or not key[0] or key[0] == key[1]:
+            continue
+        seen.add(key)
+        rows.append({**pair, "source": pair.get("source", "hand")})
+    kept_hand = len(rows)
+
+    positives = 0
+    for chunk in chunks:
+        for full, abbr in ALIAS_DEF.findall(chunk["text"]):
+            full = full.strip()
+            if full not in companies or abbr not in companies or not _declares_alias(full, abbr):
+                continue
+            if row := make(full, abbr, True, "alias-declaration"):
+                rows.append(row)
+                positives += 1
+
+    pool: list[dict[str, Any]] = []
+    for chunk in chunks:
+        if "EX-21" not in chunk["section_path"]:
+            continue
+        subs = [m["name"] for m in mentions_by_chunk.get(chunk["chunk_id"], []) if m["type"] == "Company"]
+        for sub in subs:
+            if row := make(chunk["company"], sub, False, "ex21-parent"):
+                pool.append(row)
+        for x in range(len(subs)):
+            for y in range(x + 1, len(subs)):
+                if row := make(subs[x], subs[y], False, "ex21-sibling"):
+                    pool.append(row)
+
+    # Evenly strided rather than truncated, so the sample spans every filer's table
+    # instead of exhausting the first one. Deterministic, so reruns are comparable.
+    if len(pool) > negatives:
+        stride = len(pool) / negatives
+        pool = [pool[int(i * stride)] for i in range(negatives)]
+    rows.extend(pool)
+
+    path = EVAL / "resolution_pairs.jsonl"
+    jsonl.write(path, rows)
+    counts = Counter(r["source"] for r in rows)
+    print(f"{path}: {len(rows)} pairs ({kept_hand} pre-existing hand labels kept)")
+    for source, n in counts.most_common():
+        same = sum(1 for r in rows if r["source"] == source and r["same"])
+        print(f"  {source:20} {n:5}  ({same} same / {n - same} different)")
 
 
 def sweep() -> None:

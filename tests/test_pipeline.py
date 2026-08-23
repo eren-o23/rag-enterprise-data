@@ -140,6 +140,28 @@ def test_lexical_gate_blocks_the_classic_false_merge():
     assert resolve.matches(a, b, cosine=0.99, overrides={}) is None
 
 
+def test_foreign_legal_form_marks_a_separate_incorporation():
+    """A parent and its Finnish subsidiary differ only by "Oy". Merging them turned 317
+    SUBSIDIARY_OF edges into self-loops that load.py then discarded."""
+    a, b = _rec("Skyworks Solutions, Inc."), _rec("Skyworks Solutions Oy")
+    assert resolve.matches(a, b, cosine=0.99, overrides={}) is None
+
+
+def test_raw_acronym_survives_legal_suffix_stripping():
+    """TSMC's C comes from "Company", which normalize() strips, so acronym() alone yields
+    "tsm" and never matches. Blocking has to emit the raw acronym key too."""
+    a, b = _rec("TSMC"), _rec("Taiwan Semiconductor Manufacturing Company")
+    assert resolve.matches(a, b, cosine=0.0, overrides={}) == "acronym"
+    assert resolve.blocking_keys(a["norm"], a["surface"]) & resolve.blocking_keys(b["norm"], b["surface"])
+
+
+def test_brand_short_form_merges_but_not_across_a_place():
+    """`Cisco Systems, Inc. ("Cisco")` is one company; Qorvo and Qorvo Germany are two.
+    Both pairs share a leading token, so only the place word separates them."""
+    assert resolve.matches(_rec("Cisco Systems, Inc."), _rec("Cisco"), 0.8, {}) == "prefix"
+    assert resolve.matches(_rec("Qorvo, Inc."), _rec("Qorvo Germany GmbH"), 0.99, {}) is None
+
+
 def test_legal_suffix_variants_collapse():
     for name in ("Broadcom Inc.", "Broadcom Corporation", "BROADCOM"):
         assert resolve.normalize(name) == "broadcom"
