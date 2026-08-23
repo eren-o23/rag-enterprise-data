@@ -74,7 +74,11 @@ def _user_message(chunk: dict[str, Any]) -> str:
     )
 
 
-def extract_one(chunk: dict[str, Any], model: str = fireworks.EXTRACT_MODEL) -> dict[str, Any]:
+def extract_one(
+    chunk: dict[str, Any],
+    model: str = fireworks.EXTRACT_MODEL,
+    base_url: str = fireworks.BASE_URL,
+) -> dict[str, Any]:
     """Extract one chunk. One retry with the validation error fed back, then quarantine.
 
     A single chunk can fail in a way no retry fixes. Two variants seen so far: a flat 400
@@ -98,6 +102,7 @@ def extract_one(chunk: dict[str, Any], model: str = fireworks.EXTRACT_MODEL) -> 
                 user=user + last_error,
                 schema=SCHEMA,
                 model=model,
+                base_url=base_url,
             )
         except (APIStatusError, APIConnectionError) as exc:
             return {"chunk_id": chunk["chunk_id"], "error": f"{type(exc).__name__}: {exc}"}

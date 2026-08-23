@@ -23,6 +23,7 @@ from openai import APIConnectionError, APIStatusError, OpenAI, RateLimitError
 from .config import CACHE, require
 
 BASE_URL = "https://api.fireworks.ai/inference/v1"
+OLLAMA_BASE_URL = "http://localhost:11434/v1"
 
 #: Bump when the prompt changes. It is part of the cache key, so an edited prompt
 #: invalidates exactly the entries it should and nothing else.
@@ -37,6 +38,7 @@ PRICES: dict[str, tuple[float, float]] = {
     "accounts/fireworks/models/gpt-oss-120b": (0.15, 0.60),
     "accounts/fireworks/models/gpt-oss-20b": (0.07, 0.30),
     "accounts/fireworks/models/qwen3-embedding-8b": (0.10, 0.0),
+    "llama3.2:latest": (0.0, 0.0),  # run locally via Ollama, no per-token cost
 }
 UNKNOWN_PRICE = (2.0, 6.0)  # deliberately pessimistic: an unpriced model trips the guard early
 
@@ -128,16 +130,15 @@ class Meter:
 METER = Meter()
 
 
-def client() -> OpenAI:
+def client(base_url: str = BASE_URL) -> OpenAI:
     # Without an explicit timeout, a connection that drops mid-response hangs the
     # underlying socket read forever - no exception, so _with_backoff never gets a
     # chance to retry. A 2743-call overnight run stalled silently for 11+ hours on
     # exactly this: sockets sat in CLOSE_WAIT while the process waited on a read that
     # was never coming. max_retries=0 because _with_backoff already owns retry policy;
     # the SDK's own retry-on-timeout would silently double it.
-    return OpenAI(
-        api_key=require("FIREWORKS_API_KEY"), base_url=BASE_URL, timeout=90.0, max_retries=0
-    )
+    api_key = require("FIREWORKS_API_KEY") if base_url == BASE_URL else "ollama"
+    return OpenAI(api_key=api_key, base_url=base_url, timeout=90.0, max_retries=0)
 
 
 def _cache_path(key: str) -> Any:
@@ -153,12 +154,14 @@ def chat_json(
     schema: dict[str, Any],
     model: str = EXTRACT_MODEL,
     temperature: float = 0.0,
+    base_url: str = BASE_URL,
 ) -> dict[str, Any]:
     """One constrained-decoding call, cached by content.
 
-    `response_format=json_schema` makes Fireworks constrain generation to the schema, so
-    enum fields cannot take an off-ontology value — the guarantee the whole ontology
-    design rests on. Returns parsed JSON; the caller validates semantics.
+    `response_format=json_schema` makes Fireworks (or Ollama, same OpenAI-compatible
+    shape) constrain generation to the schema, so enum fields cannot take an
+    off-ontology value — the guarantee the whole ontology design rests on. Returns
+    parsed JSON; the caller validates semantics.
     """
     key = hashlib.sha256(
         json.dumps([model, PROMPT_VERSION, system, user, schema], sort_keys=True).encode()
@@ -169,7 +172,7 @@ def chat_json(
         return json.loads(path.read_text())
 
     response = _with_backoff(
-        lambda: client().chat.completions.create(
+        lambda: client(base_url).chat.completions.create(
             model=model,
             temperature=temperature,
             messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
