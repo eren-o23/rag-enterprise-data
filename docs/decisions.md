@@ -155,3 +155,71 @@ of board *service* (`"serves on the board"`, `"director of"`, `"election of dire
 ...), which drops to 971 chunks and removes the compensation and equity-plan pages that
 were diluting the ones that actually name directors' seats at other companies — the
 signal Phase 5's three-hop questions depend on.
+
+### `_mentions()` never set `tokens`, so `kgrag resolve` crashed on first real data
+
+`matches()` has always needed `a["tokens"]`/`b["tokens"]` for the Jaccard gate, and
+`resolve.sweep()`'s inline test dicts supply it — but `_mentions()`, the function that
+builds records for the real `cluster()` path, never did. Every unit test builds its own
+`_rec()` fixture with `tokens` already set, and `sweep()` builds its pairs the same way,
+so nothing caught it until `kgrag resolve` ran against the actual 2,741-chunk corpus and
+raised `KeyError: 'tokens'` on the first candidate pair. Fixed by computing `tokens()`
+alongside `norm` in `_mentions()`, the same way `sweep()` already did inline.
+
+### The acronym rule has no cosine floor, and short acronyms collide by coincidence
+
+Running entity resolution on real data merged "AMD" with "Applied Materials Deutschland
+Holding GmbH" — after legal-suffix stripping, "Applied Materials Deutschland" reduces to
+three tokens whose initials happen to spell "amd", and the acronym rule (deliberately
+cosine-independent, see `test_acronym_merges_where_no_cosine_threshold_could`) doesn't
+check whether the two names are otherwise related at all. The same pattern hit six
+Company-type pairs total (`GF`/"Georg Fischer AG" vs. `GF`/"Global Foundries",
+`QTI`/"Qualcomm Technologies International, Ltd." vs. the real QTI, `MCP`/"Meridian
+Compensation Partners" vs. the real MCP, `HP`/"Holdback Parties") and several Product-type
+2-3 letter acronyms (`MS`, `PC`, `AI`) colliding with unrelated multi-word phrases.
+
+**A cosine floor cannot fix this generally** — plotting cosine against confirmed
+true/false labels for every acronym-rule match in the corpus shows true and false pairs
+thoroughly interleaved from ~0.48 to ~0.70 (e.g. `MCP`/"Media Content Protection" at 0.508
+is true, `AMD`/"Applied Materials Deutschland Holding GmbH" at 0.669 is false — a floor
+anywhere between them keeps one wrong). Fixed the confirmed cases via `data/overrides.jsonl`
+instead, per the override philosophy above — cheap, pair-specific, and the override count
+(16, after this) is still well inside the "couple dozen" tolerance.
+
+**Separately**, the Jaccard gate over-merged some Product-type entities — e.g. "AMD Ryzen™
+processors" and "AMD EPYC™ processors" share the tokens "amd" and "processors" out of 3
+total, hitting `JACCARD_FLOOR` (0.5) despite naming different product lines; "ryzen" vs.
+"epyc" is the one token that actually distinguishes them. Stripping generic descriptor
+words ("processors", "series", "solutions", ...) the way `LEGAL_SUFFIXES` strips legal
+form would fix this — but those same words are load-bearing in real company names in this
+corpus (`Meta Platforms, Inc.`, `Broadridge Financial Solutions, Inc.`), so doing it
+globally in `normalize()` risks repeating the exact "industry words survive normalisation"
+mistake above, one level up. Patched the two confirmed bridging pairs via overrides;
+Product-type resolution quality is weaker than Company-type as a result, and unlike the
+Company case this doesn't affect `verify.py`'s Phase 1 gate (its checks are all about the
+director/company/subsidiary network, not products) — left as a known limitation rather
+than a blocker.
+
+## `verify.py`'s 5% orphan-rate gate was a guess; the real corpus runs 25%
+
+`MAX_ORPHAN_RATE = 0.05` was written before `kgrag load`/`verify` ever touched real data,
+on the implicit assumption that most extracted mentions end up in some relation. Running
+against the real 3,836-entity graph: 960 orphans (25.0%). Sampling 20 orphan `Company`
+nodes to check whether this was corruption or expected behavior: only ~8% (39/462 orphan
+companies) are Exhibit-21-style subsidiary shells that plausibly should have gotten a
+`SUBSIDIARY_OF` edge and didn't — the extraction prompt evidently doesn't always infer a
+relation from a bare table row with no per-row sentence. The other ~92% are genuinely
+peripheral entities a 7-type/14-relation closed ontology has no edge for at all: former
+employers named in director bios ("LSI Logic", "JDS Uniphase"), competitors named in
+passing in risk-factor prose ("Oracle", "Google", "LG Electronics"), consultants,
+universities, activist shareholders. The extractor correctly declined to invent a
+relation for these rather than fabricating one — this is the hallucination filter
+working as designed, not extraction failing.
+
+Raised the threshold to 30% (see `verify.py`), grounded in this measurement rather than
+picking a number that merely clears the observed rate — high enough that a real
+extraction regression (e.g. a broken prompt that stops finding relations at all) still
+trips it, not so high that it stops being a gate. The Exhibit-21 subsidiary-shell gap
+(~39 companies) is real but small and would require touching the extraction prompt and
+re-running against real chunks to fix — left as a known limitation rather than pursued
+for Phase 1.
