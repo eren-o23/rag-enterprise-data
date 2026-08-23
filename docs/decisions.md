@@ -200,6 +200,66 @@ Company case this doesn't affect `verify.py`'s Phase 1 gate (its checks are all 
 director/company/subsidiary network, not products) — left as a known limitation rather
 than a blocker.
 
+## Resolution merged subsidiaries into parents, and the eval set could not see it
+
+`kgrag load` printed `self_loop_after_resolution: 321` and passed. Those were real edges:
+317 `SUBSIDIARY_OF` and 4 `ACQUIRED`, discarded because resolution had merged both
+endpoints into one node. Against 364 surviving subsidiary edges that is ~47% of the
+relation destroyed — and `SUBSIDIARY_OF` is one of the two relations `THREE_HOP`
+traverses, so the capability the whole project exists to demonstrate was running on half
+its data. Nothing errored. The counter was the only symptom, and it prints on a passing
+run.
+
+**Why the eval set was blind to it.** `kgrag candidates` ranks by `|cosine - TAU|`, which
+is the right sampler for locating a decision boundary and the wrong one for auditing
+over-merging: a parent and its subsidiary are near-identical strings, so they embed *far
+above* TAU and the sampler structurally cannot surface them. The set reported P=1.0 while
+the pipeline was merging 1,957 Company pairs wrongly. A clean number from a sampler that
+cannot see the failure mode is worse than no number.
+
+**Ground truth from the documents, not from judgement.** `kgrag mine-pairs` derives labels
+from structure the filings already encode: positives from the filings' own alias
+declarations (`NXP Semiconductors, N.V. ("NXP")` states the alias outright), negatives
+from Exhibit 21, which exists to enumerate separate legal entities — so any two rows
+differ by construction, as does each row from the filer above it. 337 pairs, 37 positive,
+regenerable and idempotent rather than hand-curated.
+
+**What actually discriminates.** Measured over those labels, the tokens separating
+`same=false` pairs are overwhelmingly geographic (shanghai, india, ireland, korea) while
+those separating `same=true` pairs are industry descriptors (technologies, manufacturing,
+solutions). A parent and its local subsidiary differ by a *place*; two spellings of one
+company differ by a descriptor. `entity_markers()` encodes exactly that, with the
+geography half derived from the corpus's own `Location` mentions so it tracks the corpus,
+over a static `GEO_CORE` floor so a fresh clone that has not run `extract` yet still
+blocks the merge instead of silently reverting to the old behaviour.
+
+Three changes, each measured separately: the marker block took precision .645 → .905; a
+raw acronym taken *before* legal-suffix stripping took recall .514 → .676 (this is what
+recovers TSMC, whose C comes from the "Company" the normaliser strips — the case this
+document previously settled with a hand override, now handled by rule, along with ESMC,
+SMIC, UMC and ADI); `JACCARD_FLOOR` .5 → .67. Result on the real corpus: `SUBSIDIARY_OF`
+364 → 684 edges, self-loops 321 → 45.
+
+**The rule that looked good and was wrong.** A fourth rule — merge when one name is the
+other's leading token — scored best of all on the eval set, taking recall to .919, because
+the eval positives are brand aliases and that is exactly their shape. Run against the real
+corpus it merged "Robert A. Feurle" with "Robert A. Schriesheim", and "Power Isolators"
+with "Power Products". The eval set was Company-only, so it never scored the `Person` and
+`Product` damage. Dropped the rule; the alias declarations it was trying to generalise are
+carried as mined data in `data/aliases.jsonl` instead. Documents beat heuristics, and a
+metric that only covers one entity type will happily recommend a rule that wrecks the
+others.
+
+**Scoring honestly.** Since the eval positives and `aliases.jsonl` come from the same
+mining pass, supplying the latter while scoring the former grades the resolver against its
+own answer key — it reported F1 .986 that way. `sweep()` now holds each pair's own alias
+out while leaving every other pair's available. That gives **P=1.000, R=0.297**: zero false
+merges across 300 document-derived negatives, with the rules deliberately conservative and
+declared aliases supplying recall in production. The reported recall is rules-only on
+purpose, and the residual 45 self-loops are the known remainder — names like "Applied
+Materials GmbH" and "Texas Instruments Limited" whose legal form `normalize()` strips,
+leaving them exact-matching their parent with no place word left to block on.
+
 ## `verify.py`'s 5% orphan-rate gate was a guess; the real corpus runs 25%
 
 `MAX_ORPHAN_RATE = 0.05` was written before `kgrag load`/`verify` ever touched real data,

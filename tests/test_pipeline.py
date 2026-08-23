@@ -155,11 +155,15 @@ def test_raw_acronym_survives_legal_suffix_stripping():
     assert resolve.blocking_keys(a["norm"], a["surface"]) & resolve.blocking_keys(b["norm"], b["surface"])
 
 
-def test_brand_short_form_merges_but_not_across_a_place():
-    """`Cisco Systems, Inc. ("Cisco")` is one company; Qorvo and Qorvo Germany are two.
-    Both pairs share a leading token, so only the place word separates them."""
-    assert resolve.matches(_rec("Cisco Systems, Inc."), _rec("Cisco"), 0.8, {}) == "prefix"
-    assert resolve.matches(_rec("Qorvo, Inc."), _rec("Qorvo Germany GmbH"), 0.99, {}) is None
+def test_brand_short_form_comes_from_the_filing_not_a_rule():
+    """`Cisco Systems, Inc. ("Cisco")` shares only a leading token, so no threshold
+    reaches it. Generalising that into a leading-token rule is what merged "Robert A.
+    Feurle" with "Robert A. Schriesheim" — so the alias is carried as mined data instead,
+    and the rules alone are expected to decline the pair."""
+    a, b = _rec("Cisco Systems, Inc."), _rec("Cisco")
+    assert resolve.matches(a, b, cosine=0.8, overrides={}) is None
+    declared = {(a["norm"], b["norm"]): True}
+    assert resolve.matches(a, b, cosine=0.0, overrides=declared) == "override"
 
 
 def test_legal_suffix_variants_collapse():

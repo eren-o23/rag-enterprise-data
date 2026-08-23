@@ -21,6 +21,9 @@ EXTRACTIONS = DATA / "extractions.jsonl"
 ENTITIES = DATA / "entities.jsonl"
 FAILURES = DATA / "failures.jsonl"
 OVERRIDES = DATA / "overrides.jsonl"
+#: Aliases the filings declare about themselves, mined by `kgrag mine-pairs`. Kept apart
+#: from OVERRIDES so the hand-decided count stays a quality signal (see docs/decisions.md).
+ALIASES = DATA / "aliases.jsonl"
 
 
 def require(name: str) -> str:

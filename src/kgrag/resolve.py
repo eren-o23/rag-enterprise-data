@@ -1,21 +1,29 @@
 """Collapse surface forms into canonical entities.
 
-"Acme Corp", "Acme Corporation", and "ACME" must become one node. Three match rules,
-each cheap and each defensible:
+"Acme Corp", "Acme Corporation", and "ACME" must become one node — while "Acme Ireland
+Ltd" stays its own, because `SUBSIDIARY_OF` exists to model exactly that edge. Four
+match rules, each cheap and each defensible:
 
 1. Identical after normalisation.
-2. Embedding cosine >= TAU *and* token Jaccard >= JACCARD_FLOOR. Two independent
+2. One name is the acronym of the other, taken both after normalisation and before it.
+   Rule 3 structurally cannot catch this — "AMD" and "Advanced Micro Devices" share no
+   tokens, so their Jaccard is 0 — and it is the most common alias pattern in filings.
+   The pre-normalisation form is what recovers TSMC, whose C comes from the "Company"
+   the normaliser strips, along with ESMC, SMIC, UMC and ADI.
+3. Neither name carries an entity marker the other lacks (see `entity_markers()`). A
+   place word is what separates a parent from its local subsidiary, and merging those
+   two collapses their `SUBSIDIARY_OF` edge into a self-loop that then gets discarded.
+4. Embedding cosine >= TAU *and* token Jaccard >= JACCARD_FLOOR. Two independent
    signals, both required. Cosine alone happily merges "Advanced Micro Devices" with
    "Advanced Energy Industries"; the lexical gate stops it.
-3. One name is the acronym of the other. This is the case rule 2 structurally cannot
-   catch — "AMD" and "Advanced Micro Devices" share no tokens, so their Jaccard is 0 —
-   and it is also the single most common alias pattern in SEC filings.
 
-Plus a hand-maintained override file, in both directions. Every corpus has a handful of
-pairs no threshold will ever get right - "TSMC" expands to Taiwan Semiconductor
-Manufacturing *Company*, so its C comes from a word the normaliser strips - and spending
-a week tuning for them is worse engineering than writing them down. The override count
-is itself a quality metric: if it grows past a couple of dozen, the rules are wrong.
+Plus two data files, both consulted before any rule. `data/aliases.jsonl` holds aliases
+the filings declare about themselves (`kgrag mine-pairs`) — a 10-K that writes
+`Cisco Systems, Inc. ("Cisco")` is stating a fact no threshold can reach, since the pair
+shares only a leading token. Generalising that shape into a rule is tempting and wrong:
+it merges "Robert A. Feurle" with "Robert A. Schriesheim" and "Power Isolators" with
+"Power Products". `data/overrides.jsonl` holds hand-decided pairs in both directions, and
+its count stays a quality metric: if it grows past a couple of dozen, the rules are wrong.
 """
 
 from __future__ import annotations
@@ -27,16 +35,13 @@ from typing import Any, Iterable
 import numpy as np
 
 from . import fireworks, jsonl
-from .config import CHUNKS, ENTITIES, EVAL, EXTRACTIONS, OVERRIDES
+from .config import ALIASES, CHUNKS, ENTITIES, EVAL, EXTRACTIONS, OVERRIDES
 
 #: Both from `kgrag sweep` over eval/resolution_pairs.jsonl. F1 sits on a flat 0.930
 #: plateau across tau 0.86-0.90 at floor 0.67-0.75, so these are the middle of a stable
 #: region rather than a single tuned peak.
 TAU = 0.88
 JACCARD_FLOOR = 0.67
-#: The prefix rule leans on the lexical anchor (a shared leading token), so it needs far
-#: less from the embedding than the fuzzy rule does.
-PREFIX_COSINE = 0.55
 MIN_ACRONYM = 2
 
 #: Foreign legal forms `LEGAL_SUFFIXES` deliberately does not strip. When one of these is
@@ -207,15 +212,6 @@ def matches(
 
     if cosine >= TAU and jaccard(a["tokens"], b["tokens"]) >= JACCARD_FLOOR:
         return "embedding"
-
-    # A filing that says `Cisco Systems, Inc. ("Cisco")` is naming the same company by its
-    # brand. Those share only a leading token, so Jaccard is far below the floor — but the
-    # shared *first* token is a strong anchor once a place word has been ruled out above.
-    if cosine >= PREFIX_COSINE:
-        for x, y in ((a, b), (b, a)):
-            short = x["norm"].split()
-            if len(short) == 1 and len(short[0]) >= 3 and y["norm"].split()[:1] == short:
-                return "prefix"
     return None
 
 
@@ -295,8 +291,15 @@ def run() -> None:
     records = _mentions()
     if not records:
         raise SystemExit("data/extractions.jsonl is empty — run `kgrag extract` first.")
-    overrides = {(normalize(r["a"]), normalize(r["b"])): r["same"] for r in jsonl.read(OVERRIDES)}
-    print(f"{len(records)} unique (surface form, type) mentions, {len(overrides)} hand overrides")
+    # Declared aliases load first so a hand override still wins on any pair that appears
+    # in both — the mined file is bulk evidence, the hand file is a considered decision.
+    declared = {(normalize(r["a"]), normalize(r["b"])): r["same"] for r in jsonl.read(ALIASES)}
+    hand = {(normalize(r["a"]), normalize(r["b"])): r["same"] for r in jsonl.read(OVERRIDES)}
+    overrides = {**declared, **hand}
+    print(
+        f"{len(records)} unique (surface form, type) mentions, "
+        f"{len(declared)} declared aliases, {len(hand)} hand overrides"
+    )
 
     entities = []
     for group in cluster(records, overrides):
@@ -416,27 +419,45 @@ def mine_pairs(negatives: int = 220) -> None:
         seen.add(key)
         return {"a": a, "b": b, "type": "Company", "same": same, "source": source}
 
-    # Preserve existing hand labels — they stay authoritative where they exist.
+    # Only hand labels survive a rerun. Carrying previously *mined* rows forward too
+    # would make this accumulate instead of rebuild — the mined half is derived data and
+    # has to be regenerated, or a second run silently doubles the file.
     rows: list[dict[str, Any]] = []
     for pair in jsonl.read(EVAL / "resolution_pairs.jsonl"):
-        if pair.get("same") is None:
+        if pair.get("same") is None or pair.get("source", "hand") != "hand":
             continue
         key = tuple(sorted((normalize(pair["a"]), normalize(pair["b"]))))
         if key in seen or not key[0] or key[0] == key[1]:
             continue
         seen.add(key)
-        rows.append({**pair, "source": pair.get("source", "hand")})
+        rows.append({**pair, "source": "hand"})
     kept_hand = len(rows)
 
-    positives = 0
+    # Mined independently of the eval-set dedup: these are shipped as resolution input in
+    # their own right, so they must not be suppressed just because a hand label covers
+    # the same pair.
+    declared: list[dict[str, Any]] = []
+    declared_seen: set[tuple[str, str]] = set()
     for chunk in chunks:
         for full, abbr in ALIAS_DEF.findall(chunk["text"]):
             full = full.strip()
             if full not in companies or abbr not in companies or not _declares_alias(full, abbr):
                 continue
+            key = tuple(sorted((normalize(full), normalize(abbr))))
+            if key in declared_seen or not key[0] or key[0] == key[1]:
+                continue
+            declared_seen.add(key)
+            declared.append({"a": full, "b": abbr, "same": True})
             if row := make(full, abbr, True, "alias-declaration"):
                 rows.append(row)
-                positives += 1
+
+    # These are facts the filings state about themselves, so they are worth keeping as
+    # data rather than generalising into a rule. The obvious generalisation — merge when
+    # one name is the other's leading token — reads well and is wrong: it collapses
+    # "Robert A. Feurle" into "Robert A. Schriesheim" and "Power Isolators" into "Power
+    # Products". Precision here comes from the documents, not from a cleverer threshold.
+    jsonl.write(ALIASES, declared)
+    print(f"{ALIASES}: {len(declared)} aliases the filings declare about themselves")
 
     pool: list[dict[str, Any]] = []
     for chunk in chunks:
@@ -483,8 +504,27 @@ def sweep() -> None:
     vectors /= np.linalg.norm(vectors, axis=1, keepdims=True) + 1e-9
     index = {name: i for i, name in enumerate(names)}
 
+    # Declared aliases are in scope because they are mined from the filings, not tuned
+    # against this eval set. Hand overrides stay out: they are decided by looking at
+    # pairs, so scoring with them would be marking my own homework.
+    declared = {(normalize(r["a"]), normalize(r["b"])): r["same"] for r in jsonl.read(ALIASES)}
+
+    # ...but every alias-declaration positive in this file was mined by the same pass that
+    # writes ALIASES, so supplying them here would grade the resolver against its own
+    # answer key. Held out per-pair instead: a pair under test never gets its own answer,
+    # while aliases for every *other* pair stay available, which is what the shipped
+    # resolver sees. So this measures whether the rules generalise, not whether the
+    # lookup table works.
+    positives = sum(1 for p in labelled if p["same"])
+
     global TAU
     original, best = TAU, (0.0, TAU)
+    print(
+        f"{len(declared)} declared aliases held out per-pair; hand overrides excluded\n"
+        f"scoring {len(labelled)} pairs ({positives} same / {len(labelled) - positives} "
+        f"different). Recall here is rules-only: in the shipped resolver the declared "
+        f"aliases cover their own pairs by construction."
+    )
     print(f"{'tau':>6} {'P':>7} {'R':>7} {'F1':>7}   (n={len(labelled)})")
     for tau in [round(0.70 + 0.02 * i, 2) for i in range(14)]:
         TAU = tau
@@ -493,7 +533,12 @@ def sweep() -> None:
             a = {"norm": normalize(pair["a"]), "tokens": tokens(normalize(pair["a"])), "surface": pair["a"]}
             b = {"norm": normalize(pair["b"]), "tokens": tokens(normalize(pair["b"])), "surface": pair["b"]}
             cos = float(vectors[index[pair["a"]]] @ vectors[index[pair["b"]]])
-            predicted = matches(a, b, cos, {}) is not None
+            held_out = {
+                k: v
+                for k, v in declared.items()
+                if k not in {(a["norm"], b["norm"]), (b["norm"], a["norm"])}
+            }
+            predicted = matches(a, b, cos, held_out) is not None
             tp += predicted and pair["same"]
             fp += predicted and not pair["same"]
             fn += (not predicted) and pair["same"]
