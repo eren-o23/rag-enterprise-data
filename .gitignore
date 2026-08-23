@@ -1,7 +1,11 @@
 # data artifacts — regenerable from the pipeline, never committed
-data/
+data/*
 cache/
 .env
+
+# ...except the hand-decided merge/split overrides, which are NOT regenerable.
+# Losing this file means re-deciding every pair by hand (see docs/decisions.md).
+!data/overrides.jsonl
 
 # python
 __pycache__/

@@ -29,7 +29,7 @@ import numpy as np
 from . import fireworks, jsonl
 from .config import ENTITIES, EVAL, EXTRACTIONS, OVERRIDES
 
-TAU = 0.86           # cosine threshold, chosen by the sweep in `report()`
+TAU = 0.88           # cosine threshold, from `kgrag sweep` on eval/resolution_pairs.jsonl (F1=0.769, plateau 0.88-0.96)
 JACCARD_FLOOR = 0.5
 MIN_ACRONYM = 2
 
@@ -45,6 +45,11 @@ LEGAL_SUFFIXES = re.compile(
 
 
 def normalize(name: str) -> str:
+    # EDGAR appends the state of incorporation to some filer names ("APPLIED MATERIALS
+    # INC /DE"). Left in, "applied materials de" acronyms to "amd" and false-merges with
+    # the real AMD via the acronym rule, which has no cosine floor by design (see module
+    # docstring) — this has to be stripped before that rule ever sees the name.
+    name = re.sub(r"\s*/[A-Za-z]{2}$", "", name)
     name = name.replace("&", " and ").casefold()
     name = re.sub(r"[^\w\s]", " ", name)
     name = LEGAL_SUFFIXES.sub(" ", name)
@@ -162,12 +167,14 @@ def _mentions() -> list[dict[str, Any]]:
     for row in jsonl.read(EXTRACTIONS):
         for mention in row["mentions"]:
             key = (mention["name"], mention["type"])
+            norm = normalize(mention["name"])
             rec = seen.setdefault(
                 key,
                 {
                     "surface": mention["name"],
                     "type": mention["type"],
-                    "norm": normalize(mention["name"]),
+                    "norm": norm,
+                    "tokens": tokens(norm),
                     "chunks": [],
                     "count": 0,
                 },
@@ -224,6 +231,41 @@ def run() -> None:
     print("\nlargest clusters:")
     for e in sorted(entities, key=lambda e: -len(e["aliases"]))[:8]:
         print(f"  {e['name'][:38]:40} <- {e['aliases'][:5]}")
+
+
+def write_candidates(limit: int = 80) -> None:
+    """`kgrag candidates` — surface real near-miss pairs from the corpus to hand-label.
+
+    Ranked by closeness to the current TAU: the boundary cases are what a tau sweep
+    actually needs to discriminate, not the obvious exact/acronym matches.
+    """
+    records = _mentions()
+    if not records:
+        raise SystemExit("data/extractions.jsonl is empty — run `kgrag extract` first.")
+
+    vectors = np.array(fireworks.embed([r["surface"] for r in records]), dtype=np.float32)
+    vectors /= np.linalg.norm(vectors, axis=1, keepdims=True) + 1e-9
+
+    scored = []
+    for i, j in _candidates(records):
+        cos = float(vectors[i] @ vectors[j])
+        scored.append((abs(cos - TAU), records[i], records[j], cos))
+    scored.sort(key=lambda t: t[0])
+
+    seen: set[tuple[str, str]] = set()
+    rows = []
+    for _, a, b, cos in scored:
+        key = tuple(sorted((a["norm"], b["norm"])))
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append({"a": a["surface"], "b": b["surface"], "type": a["type"], "same": None})
+        if len(rows) >= limit:
+            break
+
+    path = EVAL / "resolution_pairs.jsonl"
+    jsonl.write(path, rows)
+    print(f"{path}: {len(rows)} candidate pairs written — hand-label 'same' (true/false), trim to ~50")
 
 
 def sweep() -> None:
