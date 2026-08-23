@@ -11,11 +11,79 @@ related entities — the class of question where plain vector RAG quietly fails.
 
 | Phase | | |
 |---|---|---|
-| 1 | Entity + relationship extraction into Neo4j | in progress |
+| 1 | Entity + relationship extraction into Neo4j | **complete** — 4,496 entities, 4,685 edges, gate passing |
 | 2 | pgvector index over the same chunks | not started |
 | 3 | Question router (graph vs. vector) | not started |
 | 4 | Grounded answer synthesis with validated citations | not started |
 | 5 | Benchmark vs. vector-only baseline | not started |
+
+## Phase 1 results
+
+24 semiconductor filers → a queryable graph, for **$1.41** of a $55 budget.
+
+| | |
+|---|---|
+| Corpus | 2,743 chunks from 4 form types; 2,741 extracted, 2 quarantined |
+| Extraction | 14,431 mentions, 7,655 relations kept |
+| Dropped by validation | 882 (10.3%), of which 780 failed the evidence-span check |
+| Resolution | 5,174 surface forms → 4,496 entities |
+| Graph | 4,496 nodes, 4,685 edges, all 14 relation types populated, 0 self-loops |
+| `kgrag verify` | **PASS** |
+
+The 780 relations dropped for `evidence_not_found` are the hallucination filter earning its
+keep: every relation must carry a verbatim span that survives a substring check against its
+source chunk, so a fabricated fact is discarded without a second model call.
+
+### Entity resolution
+
+Measured against 337 labelled pairs, held out per-pair: **precision 1.000, recall 0.297.**
+
+The labels are derived from the filings rather than hand-judged — positives from aliases a
+filing declares about itself (`NXP Semiconductors, N.V. ("NXP")`), negatives from Exhibit 21,
+which exists to enumerate separate legal entities, so any two rows differ by construction.
+
+Recall is rules-only by design. The rules are deliberately conservative because a false merge
+is far more expensive than a missed one: merging a parent with its subsidiary collapses their
+`SUBSIDIARY_OF` edge into a self-loop that then gets discarded. That bug cost 317 edges — 47%
+of the relation — before it was caught, and the counter reporting it printed on a *passing*
+run. Declared aliases supply the remaining recall in production.
+
+### Model bakeoff
+
+Three models over the 20 hand-labelled gold chunks, through the identical
+schema-and-validation path that shipped:
+
+| Model | Cost | Wall clock | Mention recall | Relation recall | Failed chunks |
+|---|---|---|---|---|---|
+| **gpt-oss-120b** (production) | $0.0365 | 249 s | **0.835** | **0.575** | 0/20 |
+| gpt-oss-20b | $0.0365 | 1,113 s | 0.767 | 0.400 | 2/20 |
+| llama3.2:3b (local, Ollama) | — | 3,580 s | 0.340 | 0.037 | 5/20 |
+
+**Read recall, not precision.** The gold set labels 103 mentions where the same chunks yield
+305 from the model — on an Exhibit 21 chunk the labeller stops at 11 rows and the model takes
+all 68. Gold is a subset of truth, not a complete answer key, so recall is meaningful while
+precision measures how thorough the labelling was, penalising the most thorough model hardest.
+
+Two results worth stating plainly. **The cheaper hosted model is not cheaper**: gpt-oss-20b is
+priced at under half per token and cost the same, generating 25% longer responses and burning
+retries on schema compliance, while taking 4.5x as long. And **a 3B local model is not viable
+for this task on this hardware** — llama3.2 failed 5 of 20 chunks outright and found 3 of 80
+relations, in an hour. Constrained decoding guarantees schema-valid output; it guarantees
+nothing about whether anything correct is inside it.
+
+### Known limitations
+
+- **45 self-loops still discarded** at load, down from 321. These are names like
+  "Applied Materials GmbH" whose legal form `normalize()` strips, leaving them exact-matching
+  their parent with no place word left to separate them. ~6% of the subsidiary relation.
+- **Orphan rate is 24.8%**, against a `verify` threshold raised from 5% to 30% after measuring
+  it. Of 462 orphan companies only ~39 are subsidiary shells that arguably should have an
+  edge; the rest are peripheral mentions a closed 14-relation ontology has no edge for —
+  former employers in director bios, competitors named in passing. The extractor declining to
+  invent a relation for those is correct behaviour, not a gap.
+- **The gold set cannot measure precision** (see above), which limits the bakeoff to a
+  recall comparison.
+- **2 chunks were never extracted**, quarantined after repeated API failures.
 
 ## Stack
 
@@ -31,8 +99,20 @@ part of this project — see [docs/decisions.md](docs/decisions.md).
 cp .env.example .env        # add your FIREWORKS_API_KEY and SEC_USER_AGENT
 docker compose up -d
 uv sync
-uv run kgrag all --budget 5.00
+
+uv run kgrag fetch          # pin filings, pull sections from EDGAR
+uv run kgrag chunk          # deterministic chunk ids -- the join key for Phase 2
+uv run kgrag extract        # cost-probes first; rerun with --yes to commit
+uv run kgrag mine-pairs     # derive resolution labels + declared aliases from the filings
+uv run kgrag resolve        # collapse surface forms into canonical entities
+uv run kgrag load           # MERGE into Neo4j
+uv run kgrag verify         # the Phase 1 gate
 ```
+
+`kgrag all` runs fetch → load in order. Run `mine-pairs` before `resolve` either way: it
+writes `data/aliases.jsonl`, and without it resolution loses the aliases the filings declare
+about themselves. Tuning and comparison live in `kgrag candidates`, `kgrag sweep`, and
+`kgrag bakeoff` (see Phase 1 results).
 
 ## Corpus
 
