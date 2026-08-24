@@ -53,6 +53,37 @@ ONE_HOP = {
     "PARTY_TO": "What legal proceeding is {subject} a party to?",
 }
 
+#: Which endpoint of the edge actually answers each template. This is the 1-hop equivalent
+#: of `expected_count`: a judgement-free answer key derived from structure, so accuracy on
+#: these questions can be scored without a grader having an opinion.
+#:
+#: Two templates key on nothing, and say so rather than keying on something close. "What
+#: does {subject} supply to {object}?" is answered by a product, and "What executive role
+#: does {subject} hold at {object}?" by a job title -- neither is an endpoint of the edge,
+#: and pretending otherwise would build a key that marks the right answer wrong. Those two
+#: are graded by the judge alone.
+ANSWER_SIDE: dict[str, str | None] = {
+    "SUBSIDIARY_OF": "object",
+    "ACQUIRED": "object",
+    "COMPETES_WITH": "object",
+    "SUPPLIES": None,
+    "PARTNERS_WITH": "object",
+    "AUDITED_BY": "object",
+    "OFFICER_OF": None,
+    "DIRECTOR_OF": "object",
+    "OFFERS": "subject",   # "What is {object}, and who sells it?" -- the seller
+    "INCORPORATED_IN": "object",
+    "OPERATES_IN": "object",
+    "REGULATED_BY": "object",
+    "EXPOSED_TO": "object",
+    "PARTY_TO": "object",
+}
+
+
+def _expected(edge: dict[str, Any], side: str | None) -> list[str]:
+    """The entity name that answers the question, or nothing when no endpoint does."""
+    return [edge[side]] if side else []
+
 #: Chained templates. The middle entity is deliberately NOT named in the question -- that
 #: is what makes it multi-hop rather than two lookups, and what a single query embedding
 #: has no way to bridge.
@@ -139,6 +170,7 @@ def run(seed: int = 0, per_hop: int = 14) -> None:
                     "hops": 1,
                     "source": "mined",
                     "predicate": predicate,
+                    "expected_answers": _expected(edge, ANSWER_SIDE[predicate]),
                 }
             )
 
@@ -160,6 +192,9 @@ def run(seed: int = 0, per_hop: int = 14) -> None:
             merged[row["question"]] = row
         else:
             seen["gold_chunk_ids"] = sorted(set(seen["gold_chunk_ids"]) | set(row["gold_chunk_ids"]))
+            seen["expected_answers"] = sorted(
+                set(seen["expected_answers"]) | set(row["expected_answers"])
+            )
     rows = list(merged.values())
 
     for i, row in enumerate(rows):
@@ -221,6 +256,10 @@ def _chains(
                     "hops": hops,
                     "source": "mined",
                     "predicate": "->".join(predicates),
+                    # Every chain template asks for the far end of the walk, so the answer
+                    # is the terminal edge's object -- "Where does the parent of X operate?"
+                    # is answered by the OPERATES_IN object, not by the parent.
+                    "expected_answers": _expected(chain[-1], "object"),
                 }
             )
             kept += 1
