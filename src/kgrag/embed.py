@@ -15,7 +15,6 @@ of asserting it is free.
 from __future__ import annotations
 
 import datetime as dt
-from pathlib import Path
 from collections.abc import Iterable, Iterator
 from typing import Any
 
@@ -144,7 +143,7 @@ def run(assume_yes: bool = False, limit: int | None = None) -> None:
 def _pending(conn: psycopg.Connection, width: int, wanted: set[str]) -> list[str]:
     """chunk_ids that still have no vector at this width — how the stage resumes."""
     rows = conn.execute(
-        f"SELECT chunk_id FROM chunks WHERE emb_{width} IS NULL"  # noqa: S608 - width is from WIDTHS
+        f"SELECT chunk_id FROM chunks WHERE emb_{width} IS NULL"
     ).fetchall()
     return [r[0] for r in rows if r[0] in wanted]
 
@@ -165,7 +164,7 @@ def _embed_width(
         # connection then costs the batch in flight, not the whole width.
         with conn.cursor() as cur:
             cur.executemany(
-                f"UPDATE chunks SET emb_{width} = %s WHERE chunk_id = %s",  # noqa: S608
+                f"UPDATE chunks SET emb_{width} = %s WHERE chunk_id = %s",
                 [(str(v), i) for i, v in zip(group, vectors)],
             )
         conn.commit()
@@ -180,7 +179,7 @@ def _summarise(conn: psycopg.Connection) -> None:
     print(f"\nchunks table: {total:,} rows")
     for width in WIDTHS:
         n = conn.execute(
-            f"SELECT count(emb_{width}) FROM chunks"  # noqa: S608
+            f"SELECT count(emb_{width}) FROM chunks"
         ).fetchone()[0]
         print(f"  emb_{width:<5} {n:>6,} embedded")
     tagged = conn.execute(

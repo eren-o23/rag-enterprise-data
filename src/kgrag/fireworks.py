@@ -13,10 +13,10 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, TypeVar
+from typing import Any, TypeVar
 
 from openai import APIConnectionError, APIStatusError, OpenAI, RateLimitError
 

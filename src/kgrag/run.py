@@ -17,7 +17,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="kgrag", description=__doc__)
     parser.add_argument(
         "stage",
-        choices=(*STAGES, "all", "verify", "models", "candidates", "mine-pairs", "sweep", "bakeoff"),
+        choices=(*STAGES, "all", "verify", "models", "candidates", "mine-pairs", "mine-questions", "recall", "sweep", "bakeoff"),
     )
     parser.add_argument(
         "--budget",
@@ -57,6 +57,16 @@ def main() -> None:
         from . import resolve
 
         resolve.mine_pairs()
+        return
+    if args.stage == "mine-questions":
+        from . import questions
+
+        questions.run()
+        return
+    if args.stage == "recall":
+        from . import retrieve
+
+        retrieve.run()
         return
     if args.stage == "sweep":
         from . import resolve
