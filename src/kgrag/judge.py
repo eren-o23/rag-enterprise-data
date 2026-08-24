@@ -380,20 +380,30 @@ def _accuracy(
     print("accuracy by stratum — both instruments, never blended")
     print("-" * 74)
     labels = [label for label, _ in ARMS]
-    print(f"  {'slice':14} {'n':>3} {'key n':>6} "
-          + " ".join(f"{'key ' + l.split()[0]:>12}" for l in labels)
-          + " " + " ".join(f"{'judge ' + l.split()[0]:>14}" for l in labels))
+    short = {"vector-only": "vector", "graph + vector": "hybrid"}
+    head = (f"  {'slice':14} {'n':>3} {'keyed':>6} "
+            + " ".join(f"{'key ' + short[l]:>11}" for l in labels)
+            + "   " + " ".join(f"{'judge ' + short[l]:>12}" for l in labels))
+    print(head)
     for name, idx in _slices(questions):
         if not idx:
             continue
+        # Key coverage is a property of the question, so it is the same for both arms.
         keyable = {l: [keyed[l][i] for i in idx if keyed[l][i] is not None] for l in labels}
-        row = f"  {name:14} {len(idx):>3} {len(keyable[labels[0]]):>6} "
-        row += " ".join(f"{_rate(keyable[l], 'correct'):>12.3f}" for l in labels)
-        row += " " + " ".join(f"{_rate([judged[l][i] for i in idx]):>14.3f}" for l in labels)
+        n_keyed = len(keyable[labels[0]])
+        row = f"  {name:14} {len(idx):>3} {n_keyed:>6} "
+        # An empty key slice is "no key", not "nothing correct" -- printing 0.000 there
+        # would publish a zero the instrument never measured.
+        row += " ".join(
+            f"{_rate(keyable[l], 'correct'):>11.3f}" if n_keyed else f"{'—':>11}" for l in labels
+        )
+        row += "   " + " ".join(f"{_rate([judged[l][i] for i in idx]):>12.3f}" for l in labels)
         print(row)
-    overall = {l: [judged[l][i] for i in range(len(questions))] for l in labels}
-    print(f"  {'all':14} {len(questions):>3} {'':>6} "
-          + " " * 26 + " " + " ".join(f"{_rate(overall[l]):>14.3f}" for l in labels))
+    overall = {l: judged[l] for l in labels}
+    keyed_all = {l: [v for v in keyed[l] if v is not None] for l in labels}
+    print(f"  {'all':14} {len(questions):>3} {len(keyed_all[labels[0]]):>6} "
+          + " ".join(f"{_rate(keyed_all[l], 'correct'):>11.3f}" for l in labels)
+          + "   " + " ".join(f"{_rate(overall[l]):>12.3f}" for l in labels))
 
     print("\n  verdict mix (judge):")
     for l in labels:
