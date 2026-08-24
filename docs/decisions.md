@@ -729,3 +729,93 @@ sets are the chunks whose text justified a graph edge, a lower bound rather than
 exhaustive answer key, so a cited chunk outside the set is not necessarily wrong. The 3-hop
 figure in particular says more about gold-set sparsity at three hops than about the answers.
 The accuracy-by-hop-count table the README opens with is Phase 5's job.
+
+## Aggregation needs a different retrieval shape, because you cannot count from a sample
+
+`h000` — "How many subsidiaries does AMD list, and in how many countries?" — failed in
+Phase 4 while the graph held the answer exactly: 32 `SUBSIDIARY_OF` edges, sitting right
+there. The reason is structural, not a tuning problem. `graph_path` returns the ten
+best-corroborated chunk ids around AMD, ranked by `support`; those are risk-topic and
+auditor edges, and the 32 subsidiary edges never make the cut. No value of k fixes this,
+because a count is a property of the *whole* neighbourhood and any top-k is a sample.
+
+So counts are computed by Cypher over the entire neighbourhood, with no cap, grouped by
+predicate **and direction**, and handed to the model as stated facts. Two reasons for the
+split:
+
+- **Cypher counts exactly and a language model does not.** Handing over 32 names and asking
+  for a total is a worse instrument than a `count(DISTINCT o)`.
+- **Direction is the meaning.** 32 companies pointing `SUBSIDIARY_OF` at AMD means AMD has
+  32 subsidiaries; AMD pointing at 32 companies would mean AMD is owned by all of them.
+
+It runs only for a neighbourhood shape — an empty chain is the router saying "no fixed
+traversal fits", which is the signal it already emits for counting and summarising. A
+1-hop or 2-hop question named the traversal it wants, and burying that fact under
+corpus-wide statistics would make it harder to answer, not easier.
+
+Result: **8/8 exact counts correct**, grounding precision **1.000** on the slice.
+
+## The near-miss count: correctly cited, and wrong
+
+The first version of this answered "AMD operates in 11 countries."
+
+AMD's own `OPERATES_IN` has 11 endpoints. AMD's subsidiaries' `INCORPORATED_IN` has 11
+distinct locations. Two unrelated sets that happen to share a size — and *neither* is a
+count of countries, because `Location` in this ontology spans streets, cities, states and
+regions: AMD's eleven include "United States", "U.S." (both), "Santa Clara, California",
+"2485 Augustine Drive, Santa Clara, California 95054", "Europe" and "Asia".
+
+**Citation validation cannot catch this.** The citation resolved perfectly. The claim was
+grounded in a real retrieved chunk. It was simply an answer to a different question, and it
+would have shipped as a success — the most dangerous failure shape in the project so far,
+because every mechanism built to catch invented sources reports green.
+
+Two changes. The synthesis prompt now forbids substituting a near-miss count: a count of a
+different relation, or of a coarser or finer thing than the question names, is not an
+answer, and "distinct Locations" is explicitly not a count of countries. And the answer
+schema supports **partial answers** — a compound question can have one half supported and
+the other not, and discarding a correct fact because a different part is unsupported throws
+away a real answer. `h000` now returns the exact 32 and names the country count as
+unsupported, which is the truthful shape of that question.
+
+Counting countries remains unsupported, and honestly so: it needs both a chained aggregate
+and a `Location` type that distinguishes a country from a street address. Neither is worth
+inventing to make one eval row go green.
+
+## The aggregation stratum is where R@10 stops meaning anything
+
+| slice | n | vector | graph | routed |
+|---|---|---|---|---|
+| 1-hop | 30 | 0.586 | 0.792 | 0.728 |
+| 2-hop | 10 | 0.288 | 0.775 | 0.758 |
+| 3-hop | 12 | 0.328 | 0.704 | 0.671 |
+| **aggregation** | **8** | **0.274** | **0.088** | **0.088** |
+
+The graph scores 0.088 on the slice it answers 8/8 correctly, and loses to vector on it.
+Both facts are true and neither is a contradiction: the answer to "how many subsidiaries"
+is a computed total, not a passage, so recall against gold chunks is measuring the wrong
+object. A gold set of 45 chunks cannot be recalled at k=10 no matter how good retrieval is.
+
+This matters for Phase 5, which is built on recall-as-proxy: **that assumption does not
+extend to aggregation**, and the headline table must score this slice on answer
+correctness instead. Fortunately that needs no judge. The count came from Cypher, so
+`expected_count` in each eval row is an exact answer key derived from structure — the same
+discipline `questions.py` uses for gold chunk sets, and the only judgement-free accuracy
+number in the project.
+
+## The eval set gains an aggregation stratum, hand-phrased and structurally labelled
+
+The spec asks for a set "stratified by difficulty: single hop, two hop, three hop,
+aggregation, and out-of-scope". Four of the five existed. The set is now 65 questions with
+all five, and routing accuracy is **62/65 (95.4%)** with all 8 aggregation questions routed
+to the graph.
+
+The questions are phrased by hand and marked `"source": "hand"` so `mine-questions`
+preserves them, but their labels are derived from the graph exactly like the mined rows:
+`gold_chunk_ids` is the union of chunk ids on the counted edges, and `expected_count` is
+the count itself. No hand-judgement enters the answer key.
+
+They carry `"category": "aggregation"` and are deliberately **excluded from the hop
+slices**. An aggregation question needs one hop, but it is not a 1-hop question — folding
+it in would move the published Phase 2 recall figures and shift `MIN_1HOP_RECALL_AT_10`'s
+baseline underneath a floor that was sized against a specific population.

@@ -175,9 +175,15 @@ def recall_at_k(conn: psycopg.Connection) -> None:
 def _slices(questions: list[dict[str, Any]]) -> list[tuple[str, list[int]]]:
     """Report slices as index lists, not sublists: `list.index()` on dicts matches by
     value, so it would silently return the wrong row for any two identical questions."""
+    # Aggregation questions are their own stratum, not 1-hop questions that happen to need
+    # one hop. Folding them into the hop slices would silently move a published Phase 2
+    # number and shift the recall floor's baseline underneath it.
+    hop = [i for i, q in enumerate(questions) if not q.get("category")]
     out = [
-        (f"{h}-hop", [i for i, q in enumerate(questions) if q["hops"] == h]) for h in (1, 2, 3)
+        (f"{h}-hop", [i for i in hop if questions[i]["hops"] == h]) for h in (1, 2, 3)
     ]
+    out.append(("aggregation",
+                [i for i, q in enumerate(questions) if q.get("category") == "aggregation"]))
     out.append(("hand-written", [i for i, q in enumerate(questions) if q["source"] == "hand"]))
     out.append(("all", list(range(len(questions)))))
     return out
@@ -231,7 +237,9 @@ def _width_significance(per_width: dict[int, list[float]], trials: int = 10000) 
 
 def _check_floor(questions: list[dict[str, Any]], scores: list[float]) -> None:
     """Fail loudly if 1-hop retrieval has collapsed. See MIN_1HOP_RECALL_AT_10."""
-    one_hop = [s for q, s in zip(questions, scores) if q["hops"] == 1]
+    # Excludes aggregation, so the floor keeps measuring the same population it was sized
+    # against (0.586 over 30 questions), rather than drifting as the eval set grows.
+    one_hop = [s for q, s in zip(questions, scores) if q["hops"] == 1 and not q.get("category")]
     if not one_hop:
         raise SystemExit("no 1-hop questions in the eval set — nothing to gate on")
     got = statistics.mean(one_hop)

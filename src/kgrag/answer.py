@@ -26,6 +26,7 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
+import re
 import statistics
 import time
 from typing import Any
@@ -534,6 +535,7 @@ def _eval(
     _report_citations(rows)
     _report_refusals(questions, rows)
     _report_grounding(questions, rows)
+    _report_aggregation(questions, rows)
     _report_cost(rows)
 
     appended = len(questions) - resumed
@@ -593,22 +595,76 @@ def _report_grounding(questions: list[dict[str, Any]], rows: list[dict[str, Any]
     print("grounding — share of cited chunks that are in the question's gold set")
     print("-" * 74)
     print(f"  {'slice':14} {'n':>4} {'precision':>10}")
-    for hops in (1, 2, 3):
-        idx = [
-            i for i, q in enumerate(questions)
-            if q["hops"] == hops and q["gold_chunk_ids"] and rows[i]["cited"]
-        ]
+    slices: list[tuple[str, list[int]]] = [
+        (f"{h}-hop", [i for i, q in enumerate(questions)
+                      if q["hops"] == h and not q.get("category")])
+        for h in (1, 2, 3)
+    ]
+    slices.append(("aggregation", [i for i, q in enumerate(questions)
+                                   if q.get("category") == "aggregation"]))
+    for label, cand in slices:
+        idx = [i for i in cand if questions[i]["gold_chunk_ids"] and rows[i]["cited"]]
         if not idx:
             continue
         scores = [
             len(set(rows[i]["cited"]) & set(questions[i]["gold_chunk_ids"])) / len(rows[i]["cited"])
             for i in idx
         ]
-        print(f"  {str(hops) + '-hop':12} {len(idx):>4} {statistics.mean(scores):>10.3f}")
+        print(f"  {label:12} {len(idx):>4} {statistics.mean(scores):>10.3f}")
     print(
         "\n  Gold sets are the chunks whose text justified a graph edge — a lower bound, not\n"
         "  an exhaustive answer key, so a cited chunk outside the set is not necessarily\n"
         "  wrong. Read this as a floor. Answer correctness needs a judge and is Phase 5."
+    )
+
+
+#: Number words the model actually uses instead of digits. gpt-oss-120b answers "audits
+#: nine companies" where the graph says 9, and a digits-only scorer marks a correct answer
+#: wrong -- which is a broken instrument reporting a broken system.
+_WORDS = {w: i for i, w in enumerate((
+    "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+    "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen",
+    "eighteen", "nineteen", "twenty",
+))}
+
+
+def stated_numbers(text: str) -> set[int]:
+    """Every integer a sentence states, in digits or in words."""
+    found = {int(n.replace(",", "")) for n in re.findall(r"\b\d[\d,]*\b", text)}
+    found |= {_WORDS[w] for w in re.findall(r"[a-z]+", text.lower()) if w in _WORDS}
+    return found
+
+
+def _report_aggregation(questions: list[dict[str, Any]], rows: list[dict[str, Any]]) -> None:
+    """Exact correctness on the one slice that needs no judge.
+
+    Every other stratum needs a grader to say whether an answer is right. An aggregation
+    question does not: the graph computed the count, so `expected_count` in the eval row is
+    an exact answer key derived from structure, the same discipline `questions.py` uses for
+    gold chunk sets. This is the only judgement-free accuracy number in the project.
+
+    It is also the slice where R@10 stops meaning anything -- the answer is a computed
+    total, not a passage, so recall against gold chunks measures the wrong thing entirely.
+    """
+    idx = [i for i, q in enumerate(questions) if q.get("category") == "aggregation"]
+    if not idx:
+        return
+    print("\n" + "-" * 74)
+    print("aggregation — exact counts, scored against the graph's own totals")
+    print("-" * 74)
+    hits, misses = 0, []
+    for i in idx:
+        stated = stated_numbers(" ".join(c["text"] for c in rows[i]["claims"]))
+        if questions[i]["expected_count"] in stated:
+            hits += 1
+        else:
+            misses.append(questions[i]["qid"])
+    print(f"  exact count correct         {hits}/{len(idx)}"
+          + (f"   missed: {misses}" if misses else ""))
+    print(
+        "\n  No judge involved: the count comes from Cypher over the whole neighbourhood,\n"
+        "  so the eval row carries the true total. R@10 is NOT meaningful on this slice --\n"
+        "  the answer is a computed total, not a passage to be retrieved."
     )
 
 

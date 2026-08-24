@@ -641,3 +641,83 @@ def test_one_arm_does_not_evict_the_other_arms_resumable_rows(tmp_path, monkeypa
     # A stale prompt within the SAME arm still supersedes: that row is not resumable.
     jsonl.append(log, [row("m000", False, sha="stale0000000")])
     assert set(answer_mod._prior(model, constrain=False)) == {"m001"}
+
+
+# --------------------------------------------------------------------------- aggregation
+
+
+def test_an_aggregate_reads_correctly_in_both_directions():
+    """Direction is the whole meaning of an aggregate. 32 companies pointing SUBSIDIARY_OF
+    at AMD means AMD has 32 subsidiaries; AMD pointing SUBSIDIARY_OF at 32 things would
+    mean AMD is owned by all of them. Inbound needs a plural noun because the subject is a
+    count -- reusing the phrase yields "32 distinct entities is a subsidiary of AMD"."""
+    from kgrag.route import verbalise_aggregates
+
+    inbound = {"anchor": "AMD", "predicate": "SUBSIDIARY_OF", "outbound": False, "n": 32,
+               "examples": ["Xilinx, Inc.", "AMD Japan Ltd."], "chunk_ids": ["c1"]}
+    outbound = {"anchor": "AMD", "predicate": "OPERATES_IN", "outbound": True, "n": 11,
+                "examples": ["China"], "chunk_ids": ["c2"]}
+
+    text = verbalise_aggregates([inbound])[0]["text"]
+    assert text.startswith("AMD has 32 subsidiaries")
+    assert "and 30 others" in text, "the sample must say how much it is not showing"
+    assert "; " in text, "names contain commas, so items cannot be comma-separated"
+
+    # Outbound pluralises the object type from the ontology: Location -> Locations.
+    assert verbalise_aggregates([outbound])[0]["text"].startswith(
+        "AMD has operations in 11 distinct Locations"
+    )
+
+
+def test_a_count_of_one_is_not_an_aggregate():
+    """RELATION_NOUN is plural, so n=1 renders as "has 1 subsidiaries". A single edge is
+    already carried by the ranked path facts and does not need a count sentence."""
+    from kgrag.route import verbalise_aggregates
+
+    single = {"anchor": "X", "predicate": "SUBSIDIARY_OF", "outbound": False, "n": 1,
+              "examples": ["Y"], "chunk_ids": ["c1"]}
+    assert verbalise_aggregates([single]) == []
+
+
+def test_aggregates_are_citable_and_labelled_separately_from_facts():
+    """A count is a different kind of evidence from a path fact and from a passage: it is
+    computed, complete, and not stated by any single chunk. It gets its own block so the
+    prompt can tell the model to quote it rather than recount, and its chunk ids have to be
+    citable or every count claim fails validation."""
+    from kgrag.answer import build_context
+
+    aggs = [{"text": "AMD has 32 subsidiaries.", "chunk_ids": ["g1", "g2"], "support": 32}]
+    context, citable = build_context([], [], aggs)
+    assert "GRAPH COUNTS" in context and "do not recount" in context
+    assert {"g1", "g2"} <= citable
+    assert "[g1]" in context
+
+
+def test_aggregation_is_its_own_stratum_not_a_one_hop_question():
+    """Folding aggregation into the 1-hop slice would move a published Phase 2 number and
+    shift the recall floor's baseline underneath it. It also has to reach the graph: no ten
+    passages contain a corpus-wide total, so vector cannot be right regardless of hops."""
+    from kgrag.retrieve import _slices
+    from kgrag.route import expected_route
+
+    agg = {"hops": 1, "source": "hand", "category": "aggregation", "gold_chunk_ids": ["c"]}
+    plain = {"hops": 1, "source": "hand", "gold_chunk_ids": ["c"]}
+
+    assert expected_route(agg) == {"graph", "both"}
+    assert expected_route(plain) == {"vector", "both"}, "unchanged for real 1-hop questions"
+
+    labels = dict(_slices([plain, agg]))
+    assert labels["1-hop"] == [0], "the aggregation row must not land in the hop slice"
+    assert labels["aggregation"] == [1]
+
+
+def test_a_count_stated_in_words_scores_as_correct():
+    """The aggregation slice is the project's only judgement-free accuracy metric, so its
+    scorer has to be right: gpt-oss-120b answers "audits nine companies" where the graph
+    says 9, and a digits-only scorer marks a correct answer wrong."""
+    from kgrag.answer import stated_numbers
+
+    assert stated_numbers("audits nine companies") == {9}
+    assert stated_numbers("lists 67 subsidiaries") == {67}
+    assert stated_numbers("1,234 filings and three others") == {1234, 3}
+    assert 32 in stated_numbers("AMD lists 32 subsidiaries across 11 locations")

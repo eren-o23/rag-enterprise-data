@@ -643,6 +643,11 @@ def expected_route(question: dict[str, Any]) -> set[str]:
     """
     if question["hops"] == 0:
         return {"refuse"}
+    # An aggregation question asks for a count over a whole neighbourhood. Vector search
+    # returns ten passages; no ten passages contain a corpus-wide total, so only the graph
+    # can be right here regardless of hop count.
+    if question.get("category") == "aggregation":
+        return {"graph", "both"}
     if question["hops"] >= 2:
         return {"graph", "both"}
     if question["source"] == "hand":
@@ -769,9 +774,10 @@ def _eval(
     print(f"{'slice':16} {'n':>4} {'correct':>8} {'accuracy':>9}")
     slices: list[tuple[str, list[int]]] = [
         ("out-of-scope", [i for i, q in enumerate(questions) if q["hops"] == 0]),
-        ("1-hop mined", [i for i, q in enumerate(questions) if q["hops"] == 1 and q["source"] == "mined"]),
-        ("1-hop hand", [i for i, q in enumerate(questions) if q["hops"] == 1 and q["source"] == "hand"]),
-        ("multi-hop", [i for i, q in enumerate(questions) if q["hops"] >= 2]),
+        ("1-hop mined", [i for i, q in enumerate(questions) if q["hops"] == 1 and q["source"] == "mined" and not q.get("category")]),
+        ("1-hop hand", [i for i, q in enumerate(questions) if q["hops"] == 1 and q["source"] == "hand" and not q.get("category")]),
+        ("multi-hop", [i for i, q in enumerate(questions) if q["hops"] >= 2 and not q.get("category")]),
+        ("aggregation", [i for i, q in enumerate(questions) if q.get("category") == "aggregation"]),
         ("all", list(range(len(questions)))),
     ]
     for label, idx in slices:
@@ -802,7 +808,7 @@ def _eval(
     print(f"{'slice':14} {'n':>4} {'vector':>9} {'graph':>9} {'routed':>9}")
     answerable = [i for i, q in enumerate(questions) if q["gold_chunk_ids"]]
     for hops in (1, 2, 3):
-        idx = [i for i in answerable if questions[i]["hops"] == hops]
+        idx = [i for i in answerable if questions[i]["hops"] == hops and not questions[i].get("category")]
         if not idx:
             continue
         cols = [
@@ -810,6 +816,13 @@ def _eval(
             for key in ("vector_ids", "graph_ids", "chunk_ids")
         ]
         print(f"  {str(hops) + '-hop':12} {len(idx):>4} " + " ".join(f"{c:>9.3f}" for c in cols))
+    agg = [i for i in answerable if questions[i].get("category") == "aggregation"]
+    if agg:
+        cols = [
+            statistics.mean(_recall(rows[i][key], questions[i]["gold_chunk_ids"], k) for i in agg)
+            for key in ("vector_ids", "graph_ids", "chunk_ids")
+        ]
+        print(f"  {'aggregation':12} {len(agg):>4} " + " ".join(f"{c:>9.3f}" for c in cols))
     cols = [
         statistics.mean(
             _recall(rows[i][key], questions[i]["gold_chunk_ids"], k) for i in answerable
