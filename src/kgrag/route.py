@@ -41,7 +41,7 @@ from . import fireworks, jsonl, load, retrieve
 from .config import ENTITIES, ROUTING_LOG
 from .embed import PRODUCTION_WIDTH, connect
 from .extract import _strict
-from .ontology import RelationType
+from .ontology import RELATION_PHRASE, RelationType
 from .questions import QUESTIONS
 from .resolve import normalize
 
@@ -266,9 +266,17 @@ def resolve_entity(
 # The graph path
 # ---------------------------------------------------------------------------
 
+#: `startNode`/`endNode` rather than `nodes(path)`, and the difference is not cosmetic.
+#: The neighbourhood pattern is `-[r0]-()`, undirected, so path order says which way the
+#: traversal walked and NOT which end is the subject. Reading the endpoints off the
+#: relationship gives the stored direction whichever way the walk went; reading them off
+#: the path inverts every fact a neighbourhood walk happens to enter backwards, turning
+#: "Xilinx is a subsidiary of AMD" into its opposite with no error anywhere.
 TRAVERSE = """
 MATCH path = (a:Entity {{id: $id}}){arrows}
-RETURN [r IN relationships(path) | r.chunk_ids] AS chunk_ids,
+RETURN [r IN relationships(path) | {{
+         type: type(r), subject: startNode(r).name, object: endNode(r).name,
+         chunk_ids: r.chunk_ids, support: coalesce(r.support, 1)}}] AS steps,
        reduce(s = 0, r IN relationships(path) | s + coalesce(r.support, 1)) AS support
 ORDER BY support DESC LIMIT $limit
 """
@@ -287,30 +295,74 @@ def arrows(chain: Iterable[str]) -> str:
     return "".join(parts) if parts else "-[r0]-()"  # neighbourhood: any relation, either way
 
 
-def graph_path(session: Session, node_ids: list[str], chain: list[str], k: int) -> list[str]:
-    """Traverse from each resolved entity, ranked by corroboration.
+def graph_steps(session: Session, node_ids: list[str], chain: list[str]) -> list[dict[str, Any]]:
+    """Traverse from each resolved entity and return the edges walked, best path first.
 
     A single 1-hop query fans out -- Teradyne has nine ACQUIRED edges whose chunk_ids
     overlap heavily -- so the result needs an order. `support` (how many chunks assert the
     edge) is already stored on every edge by `load.py`; summing it along a path ranks
     well-corroborated evidence first at no extra cost.
+
+    Phase 3 only needed the chunk ids off these paths. Phase 4 has to say what the path
+    *means*, which needs the predicate and both endpoint names -- so the edges come back
+    whole and `graph_path` derives the ids from them. One query, two readings of it.
     """
     statement = TRAVERSE.format(arrows=arrows(chain))
-    scored: list[tuple[int, str]] = []
+    paths: list[tuple[int, list[dict[str, Any]]]] = []
     for node_id in node_ids:
         for row in session.run(statement, id=node_id, limit=PATH_LIMIT):
-            for group in row["chunk_ids"]:
-                for chunk_id in group or []:
-                    scored.append((row["support"], chunk_id))
-    scored.sort(key=lambda pair: -pair[0])
+            paths.append((row["support"], row["steps"]))
+    paths.sort(key=lambda pair: -pair[0])
+    return [{**step, "path_support": support} for support, steps in paths for step in steps]
 
+
+def graph_path(session: Session, node_ids: list[str], chain: list[str], k: int) -> list[str]:
+    """The ranked chunk ids off those paths -- Phase 3's currency, unchanged."""
+    return chunk_ids_of(graph_steps(session, node_ids, chain), k)
+
+
+def chunk_ids_of(steps: Iterable[dict[str, Any]], k: int) -> list[str]:
+    """Deduped chunk ids in step order, capped at k. Ranking already happened upstream."""
     out: list[str] = []
-    for _, chunk_id in scored:
-        if chunk_id not in out:
-            out.append(chunk_id)
-        if len(out) == k:
-            break
+    for step in steps:
+        for chunk_id in step["chunk_ids"] or []:
+            if chunk_id not in out:
+                out.append(chunk_id)
+            if len(out) == k:
+                return out
     return out
+
+
+#: Facts kept per question. A hub entity's neighbourhood walk returns hundreds of edges
+#: and they are already ranked, so the tail is corroborated worst and costs prompt tokens.
+FACT_LIMIT = 20
+
+
+def verbalise(steps: Iterable[dict[str, Any]], limit: int = FACT_LIMIT) -> list[dict[str, Any]]:
+    """Graph edges -> readable statements, each carrying the chunks that justified it.
+
+    Phase 4's spec is explicit that raw triples generate awkward text, and the fix is one
+    phrase per relation in `ontology.RELATION_PHRASE` -- rendered subject-first off the
+    edge's own direction, so a neighbourhood walk that entered an edge backwards still
+    reads forwards.
+
+    Deduped on the rendered text: two paths through the same hub repeat their shared edge,
+    and the same fact stated twice is prompt tokens spent to say nothing. Steps arrive
+    ranked, so the first sighting of a fact is its best-corroborated one.
+    """
+    seen: dict[str, dict[str, Any]] = {}
+    for step in steps:
+        phrase = RELATION_PHRASE[RelationType(step["type"])]
+        text = f"{step['subject']} {phrase} {step['object']}"
+        if text not in seen:
+            seen[text] = {
+                "text": text,
+                "chunk_ids": list(step["chunk_ids"] or []),
+                "support": step["support"],
+            }
+        if len(seen) == limit:
+            break
+    return list(seen.values())
 
 
 def vector_path(conn: psycopg.Connection, question: str, k: int) -> list[str]:
@@ -434,7 +486,8 @@ def route(
 
     want_graph = measure_all or chosen in (Route.GRAPH, Route.BOTH)
     want_vector = measure_all or chosen in (Route.VECTOR, Route.BOTH)
-    graph_ids = graph_path(session, node_ids, chain, k) if want_graph and node_ids else []
+    steps = graph_steps(session, node_ids, chain) if want_graph and node_ids else []
+    graph_ids = chunk_ids_of(steps, k)
     vector_ids = vector_path(conn, question, k) if want_vector else []
 
     if chosen is Route.GRAPH:
@@ -463,6 +516,10 @@ def route(
         "chunk_ids": chunk_ids,
         "graph_ids": graph_ids,
         "vector_ids": vector_ids,
+        # What the traversal actually said, not just where it pointed. Phase 4 cites these
+        # and Phase 5 reads this log; without them a routing row records that the graph was
+        # consulted and loses its answer, which cannot be reconstructed after the fact.
+        "graph_facts": verbalise(steps),
         "n_graph": len(graph_ids),
         "n_vector": len(vector_ids),
         "latency_ms": round((time.perf_counter() - start) * 1000, 1),

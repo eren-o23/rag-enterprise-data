@@ -88,6 +88,29 @@ RELATION_DOCS: dict[RelationType, str] = {
     RelationType.PARTY_TO: "subject is a named party to object (a lawsuit, investigation, or proceeding)",
 }
 
+#: How each relation reads as a sentence, for verbalising a graph path before it reaches
+#: the synthesis prompt. Phase 4's spec is explicit that raw triples generate awkward text.
+#: RELATION_DOCS cannot be reused for this: it documents the relation *to the extraction
+#: model* ("subject is owned or controlled by object") and reads as a definition, not as a
+#: statement about two named entities. Rendered subject-first, so the phrase must follow a
+#: subject and precede an object with no other glue.
+RELATION_PHRASE: dict[RelationType, str] = {
+    RelationType.SUBSIDIARY_OF: "is a subsidiary of",
+    RelationType.ACQUIRED: "acquired",
+    RelationType.COMPETES_WITH: "competes with",
+    RelationType.SUPPLIES: "supplies",
+    RelationType.PARTNERS_WITH: "has a named partnership with",
+    RelationType.AUDITED_BY: "is audited by",
+    RelationType.OFFICER_OF: "is an executive officer of",
+    RelationType.DIRECTOR_OF: "sits on the board of",
+    RelationType.OFFERS: "offers",
+    RelationType.INCORPORATED_IN: "is incorporated in",
+    RelationType.OPERATES_IN: "has operations in",
+    RelationType.REGULATED_BY: "is regulated by",
+    RelationType.EXPOSED_TO: "is exposed to the risk of",
+    RelationType.PARTY_TO: "is a party to",
+}
+
 #: RiskTopic is a closed vocabulary, not free text. Left open, the model invents a new
 #: risk phrasing per filing and every RiskTopic node has degree 1 — a graph that looks
 #: full and answers nothing.
@@ -200,6 +223,7 @@ if __name__ == "__main__":
     # Self-check: the ontology has to be internally consistent or everything downstream lies.
     assert set(ALLOWED_EDGES) == set(RelationType), "every relation needs a type signature"
     assert set(RELATION_DOCS) == set(RelationType), "every relation needs prompt documentation"
+    assert set(RELATION_PHRASE) == set(RelationType), "every relation needs a readable phrase"
     assert len(EntityType) == 7 and len(RelationType) == 14
 
     chunk = "Broadcom Inc. acquired VMware, Inc. in a transaction valued at $69 billion."
