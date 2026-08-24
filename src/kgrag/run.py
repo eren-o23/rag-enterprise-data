@@ -39,7 +39,7 @@ def main() -> None:
     parser.add_argument(
         "--router-model",
         default=None,
-        help="route: override the router model (default: gpt-oss-20b)",
+        help="route: override the router model (default: gpt-oss-120b)",
     )
     parser.add_argument(
         "--fresh",

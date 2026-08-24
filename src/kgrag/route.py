@@ -43,10 +43,21 @@ from .ontology import RelationType
 from .questions import QUESTIONS
 from .resolve import normalize
 
-#: The spec calls for "a cheap router: a small model call". gpt-oss-20b is the small
-#: sibling of the extraction model and is already priced in `fireworks.PRICES`. Kept a
-#: parameter so `--router-model` can put the 120b in the same table.
-ROUTER_MODEL = "accounts/fireworks/models/gpt-oss-20b"
+#: The spec calls for "a cheap router: a small model call", and gpt-oss-20b was the
+#: obvious candidate -- half the input price of the extraction model and healthy latency
+#: of 3-7s. It is not viable, and the failure is not slowness.
+#:
+#: Six of 57 questions stall it reproducibly: the same six, on every rerun, and raising
+#: the deadline does not help. "What is home automation solutions, and who sells it?"
+#: times out at 45s on 20b and is answered by 120b in **1.2s**. A failed call costs
+#: nothing, so the tell was a rerun reporting $0.00000 while six questions stayed
+#: unrouted -- not a bill, and not an error rate.
+#:
+#: So the router runs on the same model as extraction. This is Phase 1's llama3.2:3b
+#: result again (5/20 hard failures, not a quality gap): a smaller model that answers
+#: most inputs well and hangs on some is unusable at any price, because the failures
+#: are not random and do not go away on retry. `--router-model` still swaps it.
+ROUTER_MODEL = "accounts/fireworks/models/gpt-oss-120b"
 
 TOP_K = 10
 
