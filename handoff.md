@@ -104,6 +104,11 @@ it; the Neo4j volume is intact, so the graph is still there and does not need re
 - **`eval/questions.jsonl` is committed and half of it is not regenerable.** `kgrag
   mine-questions` rewrites the mined rows and preserves any row with `"source": "hand"`.
   The 10 hand-written rows are as unrecoverable as `data/overrides.jsonl`.
+- **`kgrag recall` exits 1 if 1-hop R@10 drops below 0.35** (`MIN_1HOP_RECALL_AT_10`).
+  That is a catastrophe floor against a measured 0.586, not a quality threshold — it is
+  sized so noise cannot trip it, and it will not notice gradual drift. Deliberately not in
+  `kgrag verify`: that gate needs only the two databases, and scoring recall would make it
+  require an API key and network on a fresh clone.
 - **Retrieval gold sets are floors, not exhaustive.** Quote recall as a lower bound. The
   bound is identical across widths, which is what makes cross-width comparison valid.
 

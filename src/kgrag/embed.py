@@ -27,6 +27,12 @@ from .config import CHUNKS, ENTITIES, ROOT, require
 #: expensive one half-written.
 WIDTHS = (1024, 2000, 4096)
 
+#: The column production queries actually use. Chosen by measuring all three widths
+#: against each other (`kgrag recall`) rather than by assuming Matryoshka truncation is
+#: free: they came out statistically indistinguishable, so the cheapest width ships.
+#: Defined here, not in verify.py or retrieve.py, so the two cannot drift apart.
+PRODUCTION_WIDTH = 1024
+
 #: Embedding requests are paced to 9 RPM, so batch size sets wall-clock time almost
 #: entirely: 2,743 chunks is 43 requests at 64, or ~5 minutes per width.
 BATCH = 64

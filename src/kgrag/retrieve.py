@@ -26,12 +26,27 @@ from typing import Any
 import psycopg
 
 from . import fireworks, jsonl
-from .embed import WIDTHS, connect
+from .embed import PRODUCTION_WIDTH, WIDTHS, connect
 from .questions import QUESTIONS
 
 INDEXED = (1024, 2000)
 EF_SEARCH = (1, 2, 4, 10, 40, 100, 400)
 KS = (1, 5, 10, 20)
+
+#: A catastrophe floor on 1-hop R@10 at the production width, NOT a quality threshold.
+#: Measured at 0.586; set to 0.35 deliberately loose. The 1-hop slice is 30 questions, and
+#: a paired bootstrap over the (larger) 52-question set already showed that differences of
+#: ~0.03 do not survive resampling -- so any threshold tight enough to detect real quality
+#: drift would flap on noise instead. What this DOES catch is the class of failure that
+#: does not drift, it collapses: querying the wrong embedding column, vectors written
+#: against the wrong chunk_ids, or the eval set decoupling from the corpus after a
+#: re-chunk. Those land near zero, not near 0.55.
+#:
+#: It lives here rather than in `kgrag verify` on purpose. verify is a gate and needs only
+#: the two databases -- no API key, no network, no spend. Scoring recall means embedding 57
+#: questions, and `cache/` is gitignored, so on a fresh clone that would turn the gate into
+#: 57 paid Fireworks calls. `kgrag recall` already pays that cost, so the check is free here.
+MIN_1HOP_RECALL_AT_10 = 0.35
 
 
 def _topk(conn: psycopg.Connection, width: int, vector: list[float], k: int, exact: bool) -> list[str]:
@@ -154,6 +169,7 @@ def recall_at_k(conn: psycopg.Connection) -> None:
         print()
 
     _width_significance(per_width)
+    _check_floor(questions, per_width[PRODUCTION_WIDTH])
 
 
 def _slices(questions: list[dict[str, Any]]) -> list[tuple[str, list[int]]]:
@@ -210,4 +226,27 @@ def _width_significance(per_width: dict[int, list[float]], trials: int = 10000) 
         "  truncation is principled rather than lossy chopping, and this is that claim\n"
         "  measured rather than asserted. 1024 is also the only width whose HNSW index beats\n"
         "  an exact scan on latency, and it stores 4x smaller."
+    )
+
+
+def _check_floor(questions: list[dict[str, Any]], scores: list[float]) -> None:
+    """Fail loudly if 1-hop retrieval has collapsed. See MIN_1HOP_RECALL_AT_10."""
+    one_hop = [s for q, s in zip(questions, scores) if q["hops"] == 1]
+    if not one_hop:
+        raise SystemExit("no 1-hop questions in the eval set — nothing to gate on")
+    got = statistics.mean(one_hop)
+
+    print()
+    if got < MIN_1HOP_RECALL_AT_10:
+        print(
+            f"FAIL  1-hop R@10 is {got:.3f} at emb_{PRODUCTION_WIDTH}, below the "
+            f"{MIN_1HOP_RECALL_AT_10:.2f} floor.\n"
+            "      This floor is loose enough that noise does not trip it, so a breach means\n"
+            "      something structural: wrong embedding column queried, vectors written\n"
+            "      against the wrong chunk_ids, or the eval set no longer matching the corpus."
+        )
+        raise SystemExit(1)
+    print(
+        f"PASS  1-hop R@10 {got:.3f} at emb_{PRODUCTION_WIDTH}, floor {MIN_1HOP_RECALL_AT_10:.2f} "
+        f"(catastrophe floor, not a quality threshold — see MIN_1HOP_RECALL_AT_10)"
     )

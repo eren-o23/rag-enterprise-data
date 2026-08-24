@@ -389,3 +389,31 @@ Phase 2 failure — a flat curve here would have meant the eval set was too easy
 running. The gold sets are floors, not exhaustive: other chunks may also answer a question,
 and that bound applies identically to all three widths, which is what keeps the comparison
 between them fair.
+
+## The recall regression check is a catastrophe floor, and it does not live in `verify`
+
+The Phase 2 plan called for `kgrag verify` to fail below a measured 1-hop recall floor,
+the same discipline `MAX_ORPHAN_RATE` got. Two things were wrong with that as specified.
+
+**It would have broken the gate.** `kgrag verify` needs only the two databases — no API
+key, no network, no spend. Scoring recall means embedding 57 questions, and `cache/` is
+gitignored, so on a fresh clone the gate would make 57 paid Fireworks calls. `kgrag recall`
+already pays that cost, so the check is free there and expensive in `verify`.
+
+**A quality threshold is not supportable at this sample size.** The 1-hop slice is 30
+questions, and the paired bootstrap over the larger 52-question set already showed
+differences of ~0.03 failing to survive resampling. Any threshold tight enough to detect
+genuine quality drift would flap on noise.
+
+So the floor is deliberately loose: **0.35 against a measured 0.586**. It does not claim to
+detect drift. It detects the failures that collapse rather than drift — querying the wrong
+embedding column, vectors written against the wrong `chunk_ids`, or the eval set decoupling
+from the corpus after a re-chunk. Confirmed by simulating exactly that: shuffling which
+answer key belongs to which question takes 1-hop R@10 from **.586 to .033**, three
+resampling-noise-widths clear of the floor in the direction that matters.
+
+That check is itself tested (`test_recall_floor_fires_on_collapse_but_not_on_noise`),
+because a gate that only ever passes is precisely the failure this project already made
+once: Phase 1's resolution eval reported P=1.000 while the pipeline merged ~1,957 pairs
+wrongly. Asserting a gate can fail is cheaper than discovering it never could.
+

@@ -139,6 +139,36 @@ def test_chunk_to_entity_inversion_is_complete():
     assert sum(len(v) for v in index.values()) == sum(len(e["mention_chunks"]) for e in entities)
 
 
+def test_recall_floor_fires_on_collapse_but_not_on_noise():
+    """A gate that only ever passes is the failure this project already has a history of:
+    Phase 1's resolution eval reported P=1.000 while the pipeline merged ~1,957 pairs
+    wrongly. So assert the floor actually trips, not just that it exists.
+
+    Verified against the real store too: scrambling which answer key belongs to which
+    question -- what a chunk_id mismatch between Postgres and Neo4j would look like --
+    takes 1-hop R@10 from 0.586 to 0.033, far below the floor and far outside the noise
+    band the loose threshold is sized for.
+    """
+    from kgrag import retrieve
+
+    questions = [{"hops": 1} for _ in range(30)] + [{"hops": 2} for _ in range(10)]
+
+    healthy = [0.586] * 30 + [0.288] * 10
+    retrieve._check_floor(questions, healthy)  # must not raise
+
+    collapsed = [0.033] * 30 + [0.288] * 10
+    with pytest.raises(SystemExit):
+        retrieve._check_floor(questions, collapsed)
+
+    # Sized so ordinary noise cannot trip it: the floor sits ~0.23 below the measured
+    # value, while the bootstrap put per-width differences inside ±0.09.
+    assert retrieve.MIN_1HOP_RECALL_AT_10 < 0.586 - 0.15
+
+    # Only the 1-hop slice gates. Multi-hop is expected to be low -- that is the Phase 5
+    # baseline -- so letting it into the average would make the floor meaningless.
+    retrieve._check_floor([{"hops": 2}] * 10 + questions, [0.0] * 10 + healthy)
+
+
 # --------------------------------------------------------------------------- chunking
 
 

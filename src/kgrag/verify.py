@@ -95,11 +95,6 @@ def run() -> None:
     print("PASS  Phase 1 + 2 gate clear")
 
 
-#: The production embedding column, chosen by measuring 1024 against 2000 and 4096 with
-#: `kgrag recall` rather than by assuming Matryoshka truncation is free.
-PRODUCTION_WIDTH = 1024
-
-
 def _check_vectors(n_chunks: int) -> list[str]:
     """The Phase 2 half of the gate: is the vector store complete and joinable?
 
@@ -123,7 +118,7 @@ def _check_vectors(n_chunks: int) -> list[str]:
             ).fetchone()[0]
             flag = "  <- INCOMPLETE" if got != rows else ""
             print(f"  emb_{width:<5} {got:>6,} embedded{flag}")
-            if width == PRODUCTION_WIDTH and got != rows:
+            if width == embed.PRODUCTION_WIDTH and got != rows:
                 failures.append(f"{rows - got} chunks have no emb_{width}")
 
         # Every chunk, including the 2 that were quarantined at extraction. They carry no
