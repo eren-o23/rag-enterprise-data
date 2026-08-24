@@ -8,14 +8,43 @@ _Last updated: 2026-08-24_
 
 Portfolio project 1 of an AI/ML engineering job-search portfolio: a hybrid knowledge-graph +
 vector RAG system over SEC filings, built entirely on open-weight models (Fireworks-hosted,
-$55 budget) instead of the Claude API the original brief specced. **Phases 1-4 of 5 are complete;
-Phase 5 ("Benchmark against plain vector RAG and publish the delta") is the next work.** See
+$55 budget) instead of the Claude API the original brief specced. **All five phases are
+complete.** The README opens with the benchmark table the spec's "Done when" asks for, and
+`POST /ask` answers with validated citations. See
 [rag-enterprise-data.md](rag-enterprise-data.md) (gitignored, local-only — the original spec)
 and [docs/decisions.md](docs/decisions.md) for the full design-decision log.
 
 ---
 
 ## Current State
+
+**Phase 5 is complete and measured — the project's "Done when" is met.** Two systems, the
+same 65 questions, the same synthesiser and citation contract, differing only in retrieval.
+Both arms ran uncached. Accuracy is judged correctness, and the judge was validated before
+any of its numbers were quoted:
+
+| slice | n | vector-only | graph + vector | delta |
+|---|---|---|---|---|
+| 1-hop | 30 | 0.633 | **0.767** | +0.133 |
+| 2-hop | 10 | 0.100 | **0.500** | +0.400 |
+| 3-hop | 12 | 0.083 | **0.417** | +0.333 |
+| aggregation | 8 | 0.125 | **0.875** | +0.750 |
+| out-of-scope | 5 | 1.000 | 1.000 | — |
+| **all** | 65 | **0.415** | **0.692** | **+0.277** |
+
+Multi-hop overall: **0.091 → 0.455**. Latency p50/p95 6,553/9,354 ms (vector) vs 6,450/10,301
+(hybrid); $0.00141 vs $0.00130 per query; $1.98 one-time ingestion the baseline does not pay.
+The graph arm is cheaper per query because the router refuses out-of-scope questions before
+any synthesis call, and slower at the tail because a traversal runs first.
+
+**The baseline's failure mode is refusal, not hallucination**: 24 of 60 answerable questions
+refused (hybrid: 7), honestly, because ten passages about the right company do not contain a
+fact reached through a second entity.
+
+**The judge was wrong twice before it was right, both times against the graph arm.** Version 1
+graded against four truncated gold chunks and treated a floor as exhaustive; version 2 read
+absence as contradiction. Hybrid key agreement went 29/48 → 42/48 → **47/48**. Phase 5 spend:
+**~$0.42** (2 sweeps + 3 judge passes). See README "Phase 5 results" and decisions.md.
 
 **Phase 4 is complete and measured.** `kgrag answer` merges both retrieval paths into one
 grounded answer. **319 citations across two full sweeps of 65 questions, zero invented.**
@@ -160,7 +189,36 @@ first: this machine has 8 GB and swap was near capacity during the Phase 1 bakeo
 - **`data/routing_log.jsonl` is append-only and gitignored**, but it is regenerable for
   $0.00 — router calls are content-cached. Phase 5 reads it.
 
-### Phase 5 specifics — read before writing any benchmark code
+### Phase 5 specifics — the instruments, and how they fail
+
+- **`kgrag bench` reads the answer log through `answer._prior`, not its own reader.** That
+  function already enforces right model, right arm, current `synth_sha`, and no row whose
+  synthesiser call never returned. A second set of rules would drift, and the one that
+  drifted would be the one publishing the numbers.
+- **`arm` is three-way now** (`free` / `constrained` / `vector`) and `_prior` keys on it.
+  Phase 4 shipped the two-arm version of this bug; a baseline that resumed the graph arm's
+  rows would publish a benchmark it never ran.
+- **The judge's reference is the gold chunk text, never the arm's own retrieved context.**
+  Grading against the latter measures groundedness, which Phase 4 already measured and which
+  is green even for an answer that is confidently wrong.
+- **Gold sets are floors, and the judge must be told so.** Both judge failures were the same
+  mistake in different clothes: treating a sparse reference as exhaustive, which penalises
+  the arm that retrieves more — on the exact axis the benchmark measures. Rules 3b/3c say
+  absence is not contradiction and an omission is `partial`. Do not weaken them.
+- **The negative control is the only real independence check**, because the judge sees the
+  keyed answer. It grades every answer against a *different* question and `bench` exits below
+  90% rejection. Its two leaks are adjacent same-template questions, i.e. the control is
+  adversarially hard rather than random.
+- **Report the two instruments separately, with every departure printed by qid.** As an
+  aggregate, version 1's failure read as 60% agreement and looked like noise. As a list it
+  read as one failure mode nineteen times. This is the mechanism that caught both faults.
+- **`expected_count` is exact about the graph, not about the world.** `a003`: 38
+  `DIRECTOR_OF` edges, a seven-member board. Counts over things a filing enumerates once
+  (Exhibit 21 subsidiaries, operating locations) hold; "how many directors" does not.
+- **Judge calls are content-cached**, so re-running `kgrag bench` is $0.00 and reproduces
+  exactly. Only a judge-prompt edit costs money (~$0.09 per full pass, ~20 min at 9 RPM).
+
+### Phase 5 specifics — retained from the build
 
 - **R@10 is NOT valid on the aggregation slice.** The graph scores 0.088 there while
   answering 8/8 correctly: the answer is a computed total, not a passage, and a 45-chunk
@@ -275,45 +333,51 @@ first: this machine has 8 GB and swap was near capacity during the Phase 1 bakeo
 
 ## Next Step
 
-**Phase 5: benchmark against plain vector RAG and publish the delta.** Everything it reads
-already exists: `data/routing_log.jsonl` (57 rows with `graph_facts`), `data/answer_log.jsonl`
-(both arms), and `eval/questions.jsonl` stratified by hop count.
+**All five phases are complete and published.** The spec's "Done when" is met: `POST /ask`
+answers with validated citations, and the README opens with the benchmark table above the
+architecture diagram. Nothing is blocking.
 
-1. Build the answer-correctness judge. This is the one new instrument, and it has to be
-   validated before its numbers are quoted — the project has twice shipped an eval that
-   could not fail (Phase 1 resolution graded against its own answer key; Phase 3 resuming
-   decisions from a prompt that no longer existed).
-2. Run the vector-only arm end to end: same synthesis, same citation contract, passages
-   only. The graph arm is `kgrag answer` as it stands.
-3. Report accuracy by hop count. The expected shape is parity at 1-hop and a widening gap
-   as hops increase — the R@10 curve already shows it (1-hop .586 → .792, 2-hop .288 →
-   .775), so the question is whether it survives synthesis.
-4. Report latency and cost per query for both, plus one-time ingestion cost ($1.41 extract
-   + $0.57 embed). Measure with `--no-cache` or the numbers describe the filesystem.
-5. Put the table at the top of the README, above the architecture diagram.
+The one defect worth fixing next, because it has a mechanism-level explanation rather than a
+score-shaped one:
 
-**h007 was decided: left alone.** The 0.800 stands. Phase 4 vindicates it — the system now
-reaches retrieval and refuses for the true reason (the entity is in the corpus, the fact is
-not) rather than guessing before it looks. Written up in README Phase 4 and decisions.md.
+- **Chains are answered at the wrong end.** *"Who competes with the customers that Teradyne
+  supplies?"* returns Teradyne's own competitors. The traversal walks the chain correctly;
+  `route.verbalise()` then flattens it into 20 unordered sentences with no marking of which
+  edge is the terminal hop, and the model cannot recover chain position from that. Rendering
+  a path *as a path*, or labelling terminal endpoints, is one function in `route.py` and
+  plausibly touches most of the 2-hop and 3-hop misses. `FACT_LIMIT = 20` ranked by `support`
+  compounds it: terminal edges are the least corroborated, so the cap preferentially drops
+  the hop the question is about.
 
-Optional cleanup, none of it blocking:
+  Re-running both arms after that change costs ~$0.17 and ~20 minutes. Publish both numbers
+  with the change named — and do not tune anything by watching the 65 questions move, which
+  is fitting the eval and would cost this benchmark the only thing that makes it worth
+  reading.
 
-- 7 of 52 answerable questions are refused at synthesis (`m008`, `m025`, `m026`, `m032`,
-  `m035`, `m045`, `h000`). Some are honest — the retrieved context genuinely lacks the fact
-  — but they have not been read one by one.
+Optional cleanup, none of it blocking, all of it unchanged from Phase 4:
+
+- 7 answerable questions still refused at synthesis (`m008`, `m025`, `m026`, `m032`, `m035`,
+  `m045`, `m046`). The judge's reasons are now printed for each by `kgrag bench` — they are
+  the honest kind, where the terminal hop's evidence is not in the top-10 passages.
+- **Data-quality items the judge surfaced that citation validation structurally cannot.**
+  `m010`: the graph asserts *Allegro MicroSystems Argentina S.A. is incorporated in
+  Argentina* — the filing says Uruguay, and the jurisdiction was inferred from the name.
+  `m002`: the `AUDITED_BY` object is the phrase "independent registered public accounting
+  firm", an extraction artifact that is not an entity. Both need a re-extract or a
+  resolve rerun, which moves published Phase 1-3 numbers underneath the benchmark.
+- The 45 remaining `self_loop_after_resolution` edges, and ~39 orphan Exhibit 21 subsidiary
+  shells with no `SUBSIDIARY_OF` edge.
+- Exhaustively re-label the 20 extraction gold chunks so the bakeoff can report precision.
 - The two remaining genuine routing errors are multi-hop questions routed to vector
   (`h001` aggregation, `m032` 2-hop).
-- The 45 remaining `self_loop_after_resolution` edges (unchanged since Phase 1). Fixing
-  them means not stripping national legal forms (`GmbH`, `AG`, `Oy`) in `normalize()`.
-  Costs a `resolve` + `embed` rerun that refreshes `entity_ids` for **$0.00**.
-- Exhaustively re-label the 20 extraction gold chunks so the bakeoff can report precision.
-- ~39 orphan Exhibit 21 subsidiary shells with no `SUBSIDIARY_OF` edge.
+
+**h007 was decided: left alone.** The 0.800 stands, vindicated in Phase 4.
 
 ## Open Questions / Blockers
 
-_None blocking._ Fireworks is working with enormous budget headroom (**~$2.23 of $55** spent
-across all four phases: $1.41 extract, $0.57 embed, $0.02 routing, ~$0.45 synthesis), and
-Phases 1-4 are complete and committed. Two things to be aware of rather than solve:
+_None blocking._ Fireworks is working with enormous budget headroom (**~$2.65 of $55** spent
+across all five phases: $1.41 extract, $0.57 embed, $0.02 routing, ~$0.45 Phase 4 synthesis,
+~$0.42 Phase 5 benchmark), and all five phases are complete and committed. Two things to be aware of rather than solve:
 
 - **This machine is memory-constrained**: 8 GB, and swap was near capacity during the bakeoff
   (that is what crashed it earlier in the session, running a larger local model). Neo4j and
@@ -405,3 +469,21 @@ _Append-only. One line per session — never overwrite previous entries._
   R@10 is meaningless on the aggregation slice (graph scores 0.088 where it answers 8/8),
   so Phase 5 must score it on correctness, which needs no judge: expected_count is an exact
   structural answer key.
+- 2026-08-24: Closed Phase 5, and the project. Built the vector-only baseline as a separate
+  system rather than this one with the graph switched off — no router call at all, identical
+  prompt, schema and citation contract, so retrieval is the only variable. Extended
+  `expected_count`'s judgement-free discipline to every mined question (`expected_answers` =
+  the far endpoint of the templated edge, 43 of 47 rows; two templates key on nothing and say
+  so), then built the judge and validated it three ways before quoting it. Result:
+  0.415 -> 0.692 overall, multi-hop 0.091 -> 0.455, aggregation 0.125 -> 0.875, with the
+  graph arm cheaper per query and slower at p95. **The judge was wrong twice, both times
+  against the graph arm, and both times the two instruments disagreeing is what caught it:**
+  version 1 graded against four truncated gold chunks and treated a floor as exhaustive
+  (Applied Materials marked wrong for naming Santa Clara), version 2 read absence as
+  contradiction (Intel marked wrong for naming the SEC *and* the European Commission). Key
+  agreement 29/48 -> 42/48 -> 47/48. Two findings the judge surfaced that no earlier
+  mechanism could: `expected_count` is exact about the graph and not the world (Wolfspeed, 38
+  director edges vs a seven-member board), and a correctly-cited answer inferred a
+  jurisdiction from a company's name (Allegro Argentina, incorporated in Uruguay). Wrote the
+  benchmark table and the deferred "What broke" narrative into the README; `kgrag verify`
+  PASS, 46 tests, `POST /ask` unchanged.
