@@ -175,6 +175,20 @@ uv run kgrag embed          # same chunks into pgvector; --yes to commit the spe
 uv run kgrag verify         # the gate: graph, vector store, and the join between them
 ```
 
+### Backing up the vector store
+
+The 2,743 × 3 embeddings cost $0.57 and live **only** in the Postgres volume — they are
+deliberately not written to `cache/` (that would be ~390 MB of JSON duplicating a durable
+database row). `docker compose stop` / `up` is safe; `docker compose down -v` deletes the
+volume and costs a full re-embed.
+
+```bash
+docker compose exec -T postgres pg_dump -U kgrag -d kgrag -Fc > backups/chunks.dump
+docker compose exec -T postgres pg_restore -U kgrag -d kgrag --clean < backups/chunks.dump
+```
+
+32 MB compressed, ~6 seconds. `backups/` is gitignored.
+
 `kgrag all` runs fetch → embed in order. Run `mine-pairs` before `resolve` either way: it
 writes `data/aliases.jsonl`, and without it resolution loses the aliases the filings declare
 about themselves. Tuning and comparison live in `kgrag candidates`, `kgrag sweep`, and

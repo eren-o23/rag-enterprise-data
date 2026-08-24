@@ -20,3 +20,6 @@ __pycache__/
 
 # original project spec — kept local, not published
 rag-enterprise-data.md
+
+# Postgres dumps — restore with pg_restore, see README. Big and regenerable-for-money.
+backups/
