@@ -150,6 +150,104 @@ it even when the index exists, silently answering the "ANN" arm exactly and repo
 recall 1.000 at every `ef_search`. The tell was non-monotonicity — ef=4 scoring above ef=40
 — with ANN latencies sitting exactly on the exact baseline.
 
+## Phase 3 results
+
+A router picks the retrieval path per question. **Routing accuracy 54/57 (94.7%)**, and
+routed retrieval beats the vector-only baseline at every hop count.
+
+### R@10 by hop count — routed vs. the Phase 2 baseline
+
+| slice | n | vector only | graph only | **routed** |
+|---|---|---|---|---|
+| 1-hop | 30 | 0.586 | 0.792 | **0.728** |
+| 2-hop | 10 | 0.288 | 0.775 | **0.758** |
+| 3-hop | 12 | 0.328 | 0.704 | **0.671** |
+| all | 52 | 0.469 | 0.768 | **0.721** |
+
+The 2-hop slice is the headline: **0.288 → 0.758, a 2.6x improvement**, on exactly the
+questions vector search is structurally unable to answer because the middle entity is never
+named. The gap widens with hop count, which is the shape the project exists to demonstrate.
+
+The vector column is not re-derived here — it reproduces Phase 2's 0.586 / 0.288 / 0.328
+exactly, and `kgrag route` runs both paths for every question specifically so that it does.
+If that column ever stops matching, the harness is broken and nothing else in the table
+should be believed.
+
+Note that **graph-only outscores routed** overall (0.768 vs 0.721). Routing is not free
+accuracy — it sends some questions to vector that the graph would have answered better. The
+honest reading is that the router is currently leaving ~5 points on the table, not that
+routing is a win in itself. What routing buys is refusing out-of-scope questions and not
+running a traversal for questions that have no graph answer.
+
+### Routing accuracy
+
+| slice | n | correct | accuracy |
+|---|---|---|---|
+| out-of-scope | 5 | 4 | 0.800 |
+| 1-hop mined | 27 | 27 | **1.000** |
+| 1-hop hand-written | 3 | 3 | **1.000** |
+| multi-hop | 22 | 20 | 0.909 |
+| **all** | **57** | **54** | **0.947** |
+
+Expected routes are derived from the eval set rather than hand-assigned, the same discipline
+`kgrag mine-questions` uses for gold chunks: `hops == 0` must refuse, `hops >= 2` must reach
+the graph, and the hand-written 1-hop paraphrases must reach vector. Mined 1-hop questions
+accept either path — they are templated off a graph edge *and* quote the canonical entity
+name verbatim, so both paths are legitimately correct and scoring one would be inventing a
+ground truth.
+
+### The model never writes Cypher
+
+A relationship type cannot be a Cypher bind parameter, so it has to be interpolated. The
+only thing between the model and the query string is `RelationType(...)`, which raises on
+anything outside the fourteen-member ontology — the same rule `load.py` already enforces at
+write time, applied at read time. The model returns enum members and an entity name:
+
+```
+chain [DIRECTOR_OF, ACQUIRED]  ->  -[r0:DIRECTOR_OF]->()-[r1:ACQUIRED]->()
+```
+
+That is four traversal shapes over one template instead of ~25 hand-written query strings,
+with every relation reachable and every chain up to length 3 expressible.
+
+### What the measurements caught
+
+**The fulltext index built for entity lookup cannot do entity lookup.** Phase 1 created a
+fulltext index on `[e.name, e.aliases]` with a comment saying it existed so a question
+saying "AMD" could find the canonical node. It returns `AMD Ryzen™ PRO`, and filtered to
+companies it returns `AMD (EMEA) LTD.` and `AMD Japan Ltd.` — the right node carries "AMD"
+among eleven aliases, and Lucene normalises by field length. An exact index over the same
+aliases keyed on `resolve.normalize` resolves every case: 4,629 surfaces, 28 ambiguous,
+broken by `mention_count`.
+
+**`gpt-oss-20b` is not viable as the router, and the failure is not slowness.** It stalls
+reproducibly on 6 of 57 questions — the same six every rerun, unaffected by a longer
+deadline. "What is home automation solutions, and who sells it?" times out at 45s on 20b
+and is answered by `gpt-oss-120b` in 1.2s. The tell was not a bill or an error rate: a
+failed call records no usage, so a rerun reported **$0.00000** while six questions silently
+stayed unrouted. This is Phase 1's `llama3.2:3b` result again — a smaller model that
+answers most inputs and hangs on the rest is unusable at any price.
+
+**Describing the corpus as "24 companies" made the router refuse its own contents.** Four
+of six routing errors were entities that are *in* the graph but are not filers: a subsidiary
+(Picosun Japan), a product, an auditor's officer, a litigation counterparty. The filings
+name thousands of such entities. Correcting that one paragraph took 1-hop accuracy from
+23/27 to **27/27** and overall from 0.895 to 0.947.
+
+### Known limitations
+
+- **One out-of-scope question is arguably mislabelled, not misrouted.** `h007` ("Who is the
+  chief executive of OpenAI?") is gold-labelled out-of-scope because OpenAI is "outside the
+  24-filer corpus" — but OpenAI *is* in the graph, a Company node with 5 mentions,
+  `PARTNERS_WITH NVIDIA` and two `DIRECTOR_OF` edges. The fact asked for is absent; the
+  entity is not. The row is left as-is pending a decision, since the hand-written eval rows
+  are not regenerable.
+- The two remaining genuine errors are multi-hop questions routed to vector (`h001`, `m032`).
+- Refusal happens before retrieval, so it is a judgement about corpus scope made without
+  looking at the corpus. Phase 4's citation validation is the real backstop.
+- Router cost is **$0.021 per full 57-question sweep** on `gpt-oss-120b`, content-cached, so
+  reruns are free.
+
 ## Stack
 
 Python 3.12 · Neo4j · pgvector · Fireworks (`gpt-oss-120b`, `qwen3-embedding-8b`) · FastAPI

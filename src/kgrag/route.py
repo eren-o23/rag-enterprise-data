@@ -23,6 +23,8 @@ comparable against the same gold sets, and what lets Phase 4 cite either one.
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
+import json
 import re
 import statistics
 import time
@@ -117,6 +119,21 @@ class Plan(BaseModel):
 
 SCHEMA = _strict(Plan.model_json_schema())
 
+
+def router_sha() -> str:
+    """Fingerprint of everything that decides how the router behaves.
+
+    It goes in every logged row and `_prior` refuses to resume across a change in it.
+    `fireworks.chat_json` already puts the prompt in its cache key so an edit invalidates
+    exactly the affected entries; without the same idea here, the resume happily replays
+    decisions made by a prompt that no longer exists. That is not hypothetical -- editing
+    the corpus description and rerunning reported byte-identical numbers and $0.00000
+    spend, because all 57 rows resumed and not one router call was made.
+
+    `--fresh` still exists for changes this cannot see, like traversal or ranking code.
+    """
+    return hashlib.sha256(f"{SYSTEM}|{json.dumps(SCHEMA, sort_keys=True)}".encode()).hexdigest()[:12]
+
 SYSTEM = f"""You route questions about SEC filings to one of two retrieval systems.
 
 CORPUS: 10-K, DEF 14A and 8-K filings from 24 US-listed semiconductor companies (AMD, \
@@ -124,6 +141,13 @@ Intel, NVIDIA, Broadcom, Qualcomm, Micron, TI, Applied Materials, Lam Research, 
 Marvell, NXP, Analog Devices, Microchip, ON Semiconductor, Skyworks, Qorvo, Teradyne, \
 Entegris, Wolfspeed, Cirrus Logic, Silicon Labs, Monolithic Power, Allegro MicroSystems), \
 filed between August 2025 and August 2026.
+
+Those 24 are the FILERS, not the scope. Their filings name thousands of other entities and
+all of them are in the corpus: subsidiaries (Exhibit 21 lists them by name), directors and
+officers, auditors and their staff, named customers, suppliers, competitors and partners,
+products and platforms, states and countries of incorporation, regulators, and parties to
+legal proceedings. A question about any of those is answerable. Refuse only when the
+subject has no connection to these filings at all.
 
 SYSTEMS:
 - graph — a knowledge graph of entities and these relations: {", ".join(r.value for r in RelationType)}.
@@ -134,7 +158,9 @@ SYSTEMS:
   rather than a connection.
 - both — the question needs a connection AND passage context, or you are genuinely unsure.
 - refuse — the corpus cannot answer it: general knowledge, market or price data, forward
-  guidance that filings do not disclose, advice, or a company outside the 24 above.
+  guidance that filings do not disclose, advice, or an entity these filings never mention.
+  Do NOT refuse merely because the subject is not one of the 24 filers -- a subsidiary,
+  a director, an auditor, a product or a litigation counterparty is normal corpus content.
 
 FIELDS:
 - entities: names the question mentions, copied verbatim. Empty when it names none.
@@ -163,6 +189,12 @@ Q: Does Marvell own the factories that make its chips?
 
 Q: What could go wrong for Applied Materials if China limits raw material exports?
 -> vector, high, entities ["Applied Materials"], neighbourhood, []
+
+Q: Where is Picosun Japan Co., Ltd. incorporated?
+-> graph, high, entities ["Picosun Japan Co., Ltd."], one_hop, [INCORPORATED_IN]
+
+Q: What executive role does Ms. Simon hold at Deloitte & Touche LLP?
+-> graph, high, entities ["Ms. Simon", "Deloitte & Touche LLP"], one_hop, [OFFICER_OF]
 
 Q: What is the capital of France?
 -> refuse, high, entities [], neighbourhood, []
@@ -419,6 +451,7 @@ def route(
         "qid": qid,
         "question": question,
         "model": model,
+        "router_sha": router_sha(),
         "route": chosen.value,
         "confidence": plan.confidence,
         "degraded_from": plan.route.value if reasons else None,
@@ -516,8 +549,15 @@ def _prior(model: str) -> dict[str, dict[str, Any]]:
     numbers quietly.
     """
     prior: dict[str, dict[str, Any]] = {}
+    sha = router_sha()
     for row in jsonl.read(ROUTING_LOG):
         if not row.get("qid") or row.get("model") != model:
+            continue
+        # A decision made by a prompt or schema that no longer exists is not a decision
+        # about the current router. Rows written before this field existed carry no sha
+        # and are not resumable either -- correct, if briefly wasteful.
+        if row.get("router_sha") != sha:
+            prior.pop(row["qid"], None)
             continue
         # A router that timed out did not decide anything -- it fell back to `both` because
         # the call never returned, and chat_json only caches successes, so retrying is both
@@ -651,5 +691,6 @@ def _eval(
         "  and nothing else in this table should be read."
     )
 
-    print(f"\nrouter spend    ${spend:.5f} over {len(rows)} questions")
-    print(f"routing log     {ROUTING_LOG} (+{len(rows)} rows)")
+    appended = len(questions) - resumed
+    print(f"\nrouter spend    ${spend:.5f} over {appended} routed, {resumed} resumed")
+    print(f"routing log     {ROUTING_LOG} (+{appended} rows)")

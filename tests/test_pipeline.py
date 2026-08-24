@@ -436,12 +436,14 @@ def test_routing_log_resume_takes_the_latest_row_per_model(tmp_path, monkeypatch
     from kgrag import jsonl, route as route_mod
 
     log = tmp_path / "routing_log.jsonl"
+    sha = route_mod.router_sha()
     jsonl.append(log, [
-        {"qid": "m000", "model": "small", "route": "vector"},
-        {"qid": "m001", "model": "small", "route": "graph"},
-        {"qid": "m000", "model": "small", "route": "graph"},   # re-measured, must win
-        {"qid": "m000", "model": "big", "route": "refuse"},    # different router
-        {"qid": None, "model": "small", "route": "both"},      # ad-hoc --question run
+        {"qid": "m000", "model": "small", "route": "vector", "router_sha": sha},
+        {"qid": "m001", "model": "small", "route": "graph", "router_sha": sha},
+        {"qid": "m000", "model": "small", "route": "graph", "router_sha": sha},  # re-measured
+        {"qid": "m000", "model": "big", "route": "refuse", "router_sha": sha},   # other router
+        {"qid": None, "model": "small", "route": "both", "router_sha": sha},     # ad-hoc run
+        {"qid": "m003", "model": "small", "route": "graph", "router_sha": "stalePrompt"},
     ])
     monkeypatch.setattr(route_mod, "ROUTING_LOG", log)
 
@@ -451,6 +453,7 @@ def test_routing_log_resume_takes_the_latest_row_per_model(tmp_path, monkeypatch
     assert None not in small, "ad-hoc runs carry no qid and must not resume anything"
     assert route_mod._prior("big")["m000"]["route"] == "refuse", "models must not cross"
     assert route_mod._prior("unrun") == {}
+    assert "m003" not in small, "a decision from a different prompt must not be resumed"
 
 
 def test_routing_log_never_resumes_over_a_router_timeout(tmp_path, monkeypatch):
@@ -460,11 +463,14 @@ def test_routing_log_never_resumes_over_a_router_timeout(tmp_path, monkeypatch):
     from kgrag import jsonl, route as route_mod
 
     log = tmp_path / "routing_log.jsonl"
+    sha = route_mod.router_sha()
     jsonl.append(log, [
-        {"qid": "m000", "model": "small", "route": "graph", "degrade_reason": None},
-        {"qid": "m001", "model": "small", "route": "both",
+        {"qid": "m000", "model": "small", "route": "graph", "degrade_reason": None,
+         "router_sha": sha},
+        {"qid": "m001", "model": "small", "route": "both", "router_sha": sha,
          "degrade_reason": "router_unreachable:APITimeoutError+low_confidence"},
-        {"qid": "m002", "model": "small", "route": "both", "degrade_reason": "low_confidence"},
+        {"qid": "m002", "model": "small", "route": "both", "degrade_reason": "low_confidence",
+         "router_sha": sha},
     ])
     monkeypatch.setattr(route_mod, "ROUTING_LOG", log)
 
@@ -474,10 +480,11 @@ def test_routing_log_never_resumes_over_a_router_timeout(tmp_path, monkeypatch):
     assert "m002" in prior, "an ordinary low-confidence degrade IS a real decision"
 
     # A later successful decision supersedes an earlier timeout for the same question.
-    jsonl.append(log, [{"qid": "m001", "model": "small", "route": "graph", "degrade_reason": None}])
+    jsonl.append(log, [{"qid": "m001", "model": "small", "route": "graph",
+                        "degrade_reason": None, "router_sha": sha}])
     assert route_mod._prior("small")["m001"]["route"] == "graph"
 
     # ...and a later timeout invalidates an earlier success, so the retry happens.
-    jsonl.append(log, [{"qid": "m000", "model": "small", "route": "both",
+    jsonl.append(log, [{"qid": "m000", "model": "small", "route": "both", "router_sha": sha,
                         "degrade_reason": "router_unreachable:APITimeoutError"}])
     assert "m000" not in route_mod._prior("small")

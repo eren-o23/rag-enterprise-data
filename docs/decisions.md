@@ -501,3 +501,103 @@ for 2031?" — is the case that decides whether it was worth it. It names a corp
 asks for a figure of a kind filings routinely contain, and is specifically not disclosed.
 A router that refuses `h005` ("capital of France") and accepts `h009` has learned nothing
 except keyword matching.
+
+## The router runs on gpt-oss-120b, because gpt-oss-20b hangs rather than errs
+
+The spec asks for "a cheap router: a small model call", and `gpt-oss-20b` is the obvious
+pick — half the input price of the extraction model, healthy measured latency of 3-7s,
+already priced in `fireworks.PRICES`. It is not usable, and the reason is worth recording
+because it is invisible in every metric you would normally look at.
+
+Six of the 57 eval questions stall it. Not "sometimes" — the same six, on every rerun,
+unaffected by raising the deadline:
+
+```
+'What is home automation solutions, and who sells it?'
+  gpt-oss-20b   45.4s  APITimeoutError
+  gpt-oss-120b   1.2s  OK
+```
+
+The tell was neither a bill nor an error rate. A call that times out records no usage, so
+the meter reads `$0.00000` and the run "succeeds" — six questions simply carry a fallback
+route instead of a decision, and (before this was fixed) their zero retrieval scores were
+charged to the graph column. A cheap model that answers most inputs well and hangs on the
+rest is unusable at any price, because the failures are deterministic and survive retry.
+
+This is Phase 1's `llama3.2:3b` result in a different costume: that model was rejected for
+5 hard failures out of 20, not for a quality gap. Same conclusion, found the same way — by
+looking at what did not come back rather than at the average of what did.
+
+At $0.021 per 57-question sweep the 120b router is not expensive enough for the trade to be
+interesting.
+
+## The router refused its own corpus, because the prompt described the wrong thing
+
+The system prompt opened by naming the corpus: "10-K, DEF 14A and 8-K filings from 24
+US-listed semiconductor companies (AMD, Intel, NVIDIA, ...)". That sentence is true and it
+was the single largest source of routing error.
+
+Four of six errors were `refuse` on questions the corpus answers perfectly well:
+
+| question | why it was refused | what it actually is |
+|---|---|---|
+| Where is Picosun Japan Co., Ltd. incorporated? | not one of the 24 | a subsidiary, listed in Exhibit 21 |
+| What is home automation solutions, and who sells it? | not one of the 24 | a product |
+| What executive role does Ms. Simon hold at Deloitte & Touche LLP? | not one of the 24 | an auditor's officer |
+| What legal proceeding is EireOg Innovations Ltd. a party to? | not one of the 24 | a litigation counterparty |
+
+The 24 are the *filers*. The graph holds **4,496 entities**, because that is the entire
+point of extracting one. Naming only the filers taught the router that 99.5% of the corpus
+was out of scope.
+
+Correcting that paragraph — the 24 are filers, their filings name subsidiaries, directors,
+officers, auditors, customers, suppliers, competitors, products, regulators and litigation
+counterparties, and all of those are in scope — moved 1-hop routing accuracy from 23/27 to
+**27/27** and overall from 0.895 to **0.947**.
+
+This is prompt correction, not eval-tuning: the original sentence made a false claim about
+the data. The guard against tuning is the out-of-scope slice, which is scored in the same
+table and would have caught an over-correction. It caught one, and it is documented below.
+
+## `h007` is probably a mislabelled gold row, and it is being left alone
+
+Widening the corpus description cost one out-of-scope refusal: `h007`, "Who is the chief
+executive of OpenAI?", now routes to `vector` instead of refusing. Its hand-written note
+gives the reason for the label as "Company outside the 24-filer corpus".
+
+That reason is false. OpenAI is in the graph — a `Company` node with 5 mentions, a
+`PARTNERS_WITH` edge to NVIDIA, and two `DIRECTOR_OF` edges from a proxy bio. What is
+absent is the *fact* asked for: no filing states who runs OpenAI. So the question is a
+"fact not in the corpus" case wearing an "entity not in the corpus" label, and routing it
+to retrieval so that grounding can fail honestly is defensible — arguably more defensible
+than refusing on a premise that is not true.
+
+The row is **not** being edited. The ten hand-written rows in `eval/questions.jsonl` are
+not regenerable and sit alongside `data/overrides.jsonl` in the don't-touch list, and
+quietly relabelling an eval row that disagrees with the system is how an eval stops being
+able to fail. It is recorded here for a decision instead, and the published 0.800 keeps
+counting it as an error in the meantime.
+
+## The routing eval resumes, and refuses to resume the two things it must not
+
+Every other stage of this pipeline resumes: `extract` skips chunk ids already in
+`extractions.jsonl`, `embed` resumes from `WHERE emb_N IS NULL`. The routing eval restarted
+from zero, which on a 9 RPM budget meant a stall past question 10 threw away forty minutes
+of paced calls — and it did, repeatedly, before an uncaught `APITimeoutError` was quarantined
+the way `extract_one` already quarantines them.
+
+Two things are deliberately *not* resumable, both learned by being bitten:
+
+**A router timeout is not a decision.** It records a fallback to `both` because the call
+never returned. Resuming over one freezes a transient stall into the published numbers, and
+`chat_json` only caches successes, so retrying is free of stale answers. Retrying the ten
+frozen rows moved 2-hop graph recall from **0.433 to 0.675** — the fallbacks were not noise,
+they were suppressing the result.
+
+**A decision made by a different prompt is not a decision about this router.** Editing the
+corpus description and rerunning reported byte-identical numbers and `$0.00000` spend,
+because all 57 rows resumed and not one router call was made. `chat_json` already puts the
+prompt in its cache key so an edit invalidates exactly the right entries; the resume now
+carries the same idea as `router_sha`, a fingerprint of the prompt and schema that every
+logged row stores and `_prior` requires to match. `--fresh` remains for changes it cannot
+see, such as traversal or ranking code.

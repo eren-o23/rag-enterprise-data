@@ -8,14 +8,31 @@ _Last updated: 2026-08-24_
 
 Portfolio project 1 of an AI/ML engineering job-search portfolio: a hybrid knowledge-graph +
 vector RAG system over SEC filings, built entirely on open-weight models (Fireworks-hosted,
-$55 budget) instead of the Claude API the original brief specced. **Phases 1 and 2 of 5 are complete;
-Phase 3 ("Route questions to the right retrieval path") is the current work.** See
+$55 budget) instead of the Claude API the original brief specced. **Phases 1, 2 and 3 of 5 are complete;
+Phase 4 ("Merge both sources into one grounded answer") is the next work.** See
 [rag-enterprise-data.md](rag-enterprise-data.md) (gitignored, local-only — the original spec)
 and [docs/decisions.md](docs/decisions.md) for the full design-decision log.
 
 ---
 
 ## Current State
+
+**Phase 3 is complete and measured.** `kgrag route` routes each question to the graph
+path, the vector path, both, or a refusal. **Routing accuracy 54/57 (94.7%)**; routed
+retrieval beats vector-only at every hop count, and the 2-hop slice goes **0.288 -> 0.758
+(2.6x)**. Router costs **$0.021** per full sweep on `gpt-oss-120b` and reruns are free.
+See README "Phase 3 results".
+
+| slice | n | vector | graph | routed |
+|---|---|---|---|---|
+| 1-hop | 30 | 0.586 | 0.792 | 0.728 |
+| 2-hop | 10 | 0.288 | 0.775 | 0.758 |
+| 3-hop | 12 | 0.328 | 0.704 | 0.671 |
+| all | 52 | 0.469 | 0.768 | 0.721 |
+
+Note **graph-only (0.768) outscores routed (0.721)** — routing is not free accuracy, it
+currently leaves ~5 points on the table by sending some questions to vector that the graph
+answers better. What it buys is refusal and not traversing when there is no graph answer.
 
 **Extraction is done and verified.** `data/extractions.jsonl` has 2,741 of 2,743 chunks
 (2 quarantined into `data/failures.jsonl`), run to completion, output inspected:
@@ -83,7 +100,33 @@ it; the Neo4j volume is intact, so the graph is still there and does not need re
 - **The gold set is ~3x under-labeled** (103 mentions where the model finds 305), so it
   supports recall comparisons only. Do not quote precision or F1 from `kgrag bakeoff`.
 
-### Phase 3 specifics — read before writing any routing code
+### Phase 4 specifics — read before writing any synthesis code
+
+- **`kgrag route` is the input to Phase 4.** `route.route()` returns the log row, which
+  keeps `graph_ids`, `vector_ids` and the merged `chunk_ids` as separate lists — the
+  labelled-context split Phase 4 needs is already there.
+- **The model never authors Cypher, and that rule must survive Phase 4.** `route.arrows()`
+  interpolates a relationship type only after `RelationType(...)` accepts it. Same rule as
+  `load.py` at write time. `test_traversal_rejects_a_predicate_the_model_invented` asserts
+  it against injection-shaped strings.
+- **The router runs on `gpt-oss-120b`, not the 20b.** The 20b stalls reproducibly on 6 of
+  57 questions and a timed-out call records no usage, so the failure shows up as
+  `$0.00000` spend and unrouted questions rather than as an error rate. Do not "optimise"
+  the router back down to the 20b without rerunning the eval and reading the degradations
+  line.
+- **`ROUTER_TIMEOUT = 20.0` and `ROUTER_ATTEMPTS = 3`, passed through `chat_json`.** The
+  module default is still 90s/6 for extraction. Do not collapse the two.
+- **`kgrag route` resumes from `data/routing_log.jsonl` and deliberately will not resume
+  two things:** a row whose router call timed out (a fallback, not a decision) and a row
+  whose `router_sha` does not match the current prompt+schema. Use `--fresh` after changing
+  traversal or ranking code, which the sha cannot see.
+- **Entity lookup does NOT use the Neo4j fulltext index.** It exists and is the *fallback*.
+  The exact normalized-alias index in `route.entity_index()` is the primary, because
+  fulltext loses "AMD" to `AMD Japan Ltd.` (see decisions.md).
+- **`data/routing_log.jsonl` is append-only and gitignored**, but it is regenerable for
+  $0.00 — router calls are content-cached. Phase 5 reads it.
+
+### Phase 3 specifics — retained
 
 - **1024 is the production embedding column.** All three widths were measured and are
   statistically indistinguishable (paired bootstrap, every CI crosses zero). `emb_2000` and
@@ -153,37 +196,40 @@ it; the Neo4j volume is intact, so the graph is still there and does not need re
 
 ## Next Step
 
-**Phase 3: route questions to the graph path or the vector path.** Both stores are built,
-measured, and joined. Concretely, in order:
+**Phase 4: merge both sources into one grounded answer.** `kgrag route` already returns
+ranked `chunk_id`s from whichever path(s) it chose, which is the input Phase 4 needs.
 
-1. A cheap router: one small-model call with a few-shot prompt returning an enum
-   (`graph` | `vector` | `both`), plus a low-confidence fallback that runs both and merges.
-   `chat_json` already does constrained decoding against a schema, so the enum is
-   unreachable-if-invalid rather than merely validated — reuse it.
-2. On the graph path: extract entities from the question, resolve them to node ids, run a
-   **parameterised** Cypher query from a template library keyed by query type. Never let the
-   model emit raw Cypher. `load.py` already enforces exactly this rule at write time (the
-   predicate is interpolated only after passing through `RelationType(...)`) — the same
-   discipline applies at read time. `cypher/schema.cypher` has a fulltext index on
-   `e.name, e.aliases` that exists for this lookup.
-3. On the vector path: `retrieve._topk(conn, 1024, vector, k, exact=True)` is already the
-   query. **1024 is the production column** — see Phase 2 results.
-4. **Log every routing decision** with the question and the outcome. Phase 5 needs this and
-   it cannot be reconstructed later.
-5. `eval/questions.jsonl` already carries `hops` and 5 out-of-scope questions with empty
-   gold sets — that is a ready-made router eval. A question with `hops >= 2` should route to
-   the graph; an out-of-scope one should refuse.
+1. Convert graph paths into readable statements before they reach the prompt. Raw triples
+   generate awkward text. The traversal already returns the relationship chain, so the
+   verbaliser has the predicate and both endpoint names.
+2. Deduplicate across the two sets, then assemble context with **explicit labels** keeping
+   graph-derived facts separate from retrieved passages.
+3. Require a citation per claim and validate that every citation resolves to a chunk_id
+   that was actually retrieved. Reject and regenerate when it does not. This is also the
+   real backstop for out-of-scope questions — the router's `refuse` is a guess made before
+   looking at the corpus (see decisions.md).
+4. `route.route()` returns the full log row including `graph_ids`, `vector_ids` and
+   `chunk_ids` separately, so the labelling in step 2 needs no extra bookkeeping.
+
+**One decision waiting on you:** `h007` ("Who is the chief executive of OpenAI?") is
+gold-labelled out-of-scope because OpenAI is "outside the 24-filer corpus". OpenAI *is* in
+the graph — a Company node, 5 mentions, `PARTNERS_WITH` NVIDIA, two `DIRECTOR_OF` edges.
+The entity is present; the fact asked for is not. The router now routes it to `vector`,
+which is scored as the only out-of-scope error (0.800). The row was **not** edited — the
+10 hand-written rows are not regenerable, and silently relabelling an eval row that
+disagrees with the system is how an eval stops being able to fail. Either relabel it
+deliberately or leave the 0.800 standing.
 
 Optional cleanup, none of it blocking:
 
-- The 45 remaining `self_loop_after_resolution` edges (unchanged from Phase 1). Fixing them
-  means not stripping national legal forms (`GmbH`, `AG`, `Oy`) in `normalize()`. Entity ids
-  are deliberately NOT frozen, so this now costs a `resolve` + `embed` rerun that refreshes
-  `entity_ids` in Postgres for **$0.00** and re-embeds nothing.
+- The two remaining genuine routing errors are multi-hop questions routed to vector
+  (`h001` aggregation, `m032` 2-hop).
+- The 45 remaining `self_loop_after_resolution` edges (unchanged since Phase 1). Fixing
+  them means not stripping national legal forms (`GmbH`, `AG`, `Oy`) in `normalize()`.
+  Entity ids are deliberately NOT frozen, so this costs a `resolve` + `embed` rerun that
+  refreshes `entity_ids` in Postgres for **$0.00** and re-embeds nothing.
 - Exhaustively re-label the 20 extraction gold chunks so the bakeoff can report precision.
 - ~39 orphan Exhibit 21 subsidiary shells with no `SUBSIDIARY_OF` edge.
-- The retrieval question templates are stilted by design (see decisions.md). One model pass
-  to naturalise the phrasing is the upgrade if 1-hop recall ever looks implausibly high.
 
 ## Open Questions / Blockers
 
@@ -230,3 +276,19 @@ _Append-only. One line per session — never overwrite previous entries._
   and the question miner emitted duplicate question text with different gold sets, which
   makes an eval unanswerable. Also corrected the handoff's own plan: it proposed embedding
   20 gold chunks at 4096, which cannot rank against anything.
+- 2026-08-24: Closed Phase 3. Built `kgrag route`: one constrained-decoding call returns
+  route + entities + a predicate chain, the chain is interpolated into Cypher only after
+  `RelationType()` accepts it, and both paths return ranked chunk_ids so they are directly
+  comparable. Routing accuracy 54/57; routed retrieval beats vector at every hop count and
+  2-hop goes 0.288 -> 0.758. Four bugs found by measurements disagreeing with themselves:
+  the fulltext index created in Phase 1 for entity lookup cannot resolve "AMD" (Lucene
+  length-normalises it below `AMD Japan Ltd.`); `gpt-oss-20b` stalls forever on 6 of 57
+  questions while the 120b answers them in ~1s, and because a timed-out call records no
+  usage the failure reads as `$0.00000` spend rather than an error rate; the eval was
+  charging those router failures to the graph column, understating 2-hop graph recall as
+  0.433 when it is 0.675; and describing the corpus as "24 companies" made the router
+  refuse subsidiaries, products and auditors that are in its own graph (0.895 -> 0.947 to
+  fix). Also caught my own resume silently replaying decisions made by a prompt that no
+  longer existed — an edit + rerun reported identical numbers at $0.00000 spend — now
+  guarded by `router_sha`. Left `h007` mislabelled rather than edit a non-regenerable eval
+  row; it is the only out-of-scope error and is written up for a decision.
