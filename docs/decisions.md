@@ -905,3 +905,63 @@ The judge grades against the filing text that justified the edge, never against 
 the answering system retrieved. Grading against the latter measures whether the answer
 follows from what the system found — groundedness, which Phase 4 already measured, and which
 is green even for an answer that is confidently wrong.
+
+## The judge's first two versions measured the answer key, not the answer
+
+Shipped, run, and caught by its own validation — twice. Both faults pushed in the same
+direction, and that direction was against the arm the benchmark exists to test.
+
+**Version 1 graded against gold chunks alone, capped at four and truncated to 4,000
+characters each.** The key and the judge disagreed on 19 of 48 hybrid answers, almost all
+`key=correct, judge=incorrect`. A one-directional disagreement is a bias, not noise, so the
+disagreements got read:
+
+- 14 of 65 questions carry more than four gold chunks. `m039` has nine, the judge saw four,
+  and it truthfully reported that the reference said nothing about competitors. That verdict
+  was about a reference this module crippled, published as a verdict about the answer.
+- `m005`'s supporting sentence sits at character 3,521 of its chunk. Per-chunk truncation is
+  a coin flip on whether the graded evidence is visible.
+- Gold sets are floors — the README has said so since Phase 2 — and the judge treated them
+  as exhaustive. Applied Materials was marked wrong for naming Santa Clara, Intel for naming
+  the European Commission. Both true. Both absent from a one-chunk reference.
+
+The third of those is the one that matters: **penalising unverifiable additions penalises
+the arm that retrieves more**, which is the graph arm, on the exact axis the benchmark
+claims to measure. An instrument with a bias pointing at its own conclusion is worse than no
+instrument.
+
+**Version 2 fixed the reference and still broke its own rule.** Whole chunks, all of them,
+the keyed answer shown as *one* correct answer, and an explicit rule that extra detail is
+not an error. The override list — `key=correct, judge=incorrect` — came back with four rows,
+three of which were the same failure: Intel's answer named the SEC (keyed) and added the
+European Commission, marked incorrect for "contradicting the reference which only lists the
+U.S. SEC". The reference does not say *only*. Absence is not contradiction, and the prompt
+now says so in as many words.
+
+The rule that made this findable is that the two instruments are reported **separately, with
+every departure listed by qid**. An aggregate agreement rate would have read as 60% and
+looked like judge noise. The per-row list read as one failure mode repeated 19 times.
+
+The honest cost of the fix: with a non-exhaustive reference, a *fabricated* addition and a
+*true* addition are indistinguishable, so the judge no longer penalises either. Provenance is
+covered elsewhere — every published citation resolves to a retrieved chunk, measured at 0
+invented across 319 citations — and correctness of the asked-for fact is what this instrument
+grades. Two different guarantees, deliberately not blended.
+
+## `expected_count` is exact about the graph, and the graph is not the world
+
+`a003` — "How many directors sit on the board of Wolfspeed?" — is answered 38 by the graph
+and 7 by the proxy statement, and the judge is the thing that noticed. Wolfspeed's
+`DIRECTOR_OF` edges include people the filings name as directors across multiple documents
+and periods; the board itself has seven members.
+
+This is a limit on the metric this project has been calling its only judgement-free accuracy
+number. `expected_count` is derived from Cypher, so it is exactly right about the
+neighbourhood — and the neighbourhood is a union over filings, not a snapshot of a board on
+a date. The count questions where that distinction does not bite (subsidiaries listed in an
+Exhibit 21, locations of operation) remain sound; a "how many directors" question quietly
+asks for something else.
+
+Left in the eval set rather than removed: the row is not wrong, it is measuring the graph,
+and deleting the one question that exposes the difference between the graph and the world
+would be exactly the kind of eval-set edit this project keeps refusing to make.

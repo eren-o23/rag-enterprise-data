@@ -4,8 +4,51 @@ Hybrid knowledge-graph + vector retrieval over SEC filings, running entirely on 
 models** (Fireworks-hosted). Built to answer questions that require two or three hops across
 related entities — the class of question where plain vector RAG quietly fails.
 
-> **Benchmark vs. vector-only baseline** — _Phase 5. Accuracy by hop count, latency, and cost
-> per query land here, above the architecture diagram._
+## Benchmark vs. plain vector RAG
+
+Same 65 questions, same synthesiser, same citation contract. The only difference is
+retrieval: the baseline embeds the question, takes the top 10 passages, and makes no router
+call at all. Accuracy is answer correctness, graded by a judge that is validated before it is
+quoted (below), with a judgement-free structural key reported alongside it.
+
+| slice | n | vector-only | graph + vector | delta |
+|---|---|---|---|---|
+| 1-hop | 30 | 0.633 | **0.767** | +0.133 |
+| 2-hop | 10 | 0.100 | **0.500** | +0.400 |
+| 3-hop | 12 | 0.083 | **0.417** | +0.333 |
+| aggregation | 8 | 0.125 | **0.875** | +0.750 |
+| out-of-scope (refuse) | 5 | 1.000 | 1.000 | — |
+| **all** | **65** | **0.415** | **0.692** | **+0.277** |
+
+| | vector-only | graph + vector |
+|---|---|---|
+| latency p50 / p95 | 6,553 / **9,354** ms | 6,450 / 10,301 ms |
+| $ per query | $0.00141 | **$0.00130** |
+| one-time ingestion | **$0.00** | $1.98 |
+
+**Near-parity at one hop, and the gap opens with depth** — 0.633 → 0.767 at one hop, 0.091 →
+0.455 across the 22 multi-hop questions. That curve is the whole claim: embeddings answer
+what a passage states and lose what a chain implies. The graph arm is also *cheaper* per
+query, because the router refuses out-of-scope questions before any synthesis call — and
+slower at the tail, because a traversal runs before the model sees anything.
+
+```mermaid
+flowchart LR
+  subgraph ingest["one-time ingestion · $1.98"]
+    E["EDGAR<br/>10-K · Ex-21 · DEF 14A · 8-K"] --> C["chunk<br/>sha256 id = the join key"]
+    C --> X["extract<br/>closed ontology<br/>evidence span verified"]
+    X --> R["resolve<br/>3 named match rules"]
+    R --> N[("Neo4j<br/>4,496 nodes · 4,685 edges")]
+    C --> V[("pgvector<br/>2,743 × 1024d")]
+  end
+  Q(["question"]) --> RT{"route<br/>constrained decoding<br/>the model never writes Cypher"}
+  RT -->|"connections · chains · counts"| N
+  RT -->|"definitions · policy · language"| V
+  RT -->|"out of scope"| REF["refuse<br/>$0.00, ~2 ms"]
+  N --> S["synthesise<br/>GRAPH COUNTS · GRAPH FACTS · PASSAGES"]
+  V --> S
+  S --> A["answer<br/>every citation is a chunk id<br/>that was actually retrieved"]
+```
 
 ## Status
 
@@ -15,7 +58,7 @@ related entities — the class of question where plain vector RAG quietly fails.
 | 2 | pgvector index over the same chunks | **complete** — 2,743 chunks × 3 widths, recall measured by hop count |
 | 3 | Question router (graph vs. vector) | **complete** — 95.4% routing accuracy, multi-hop recall 2.5x the vector baseline |
 | 4 | Grounded answer synthesis with validated citations | **complete** — 319 citations, 0 invented; aggregation 8/8 exact |
-| 5 | Benchmark vs. vector-only baseline | not started |
+| 5 | Benchmark vs. vector-only baseline | **complete** — accuracy by hop count against plain vector RAG, judged and validated |
 
 ## Phase 1 results
 
@@ -397,6 +440,142 @@ curl -s localhost:8000/ask -H 'content-type: application/json' \
 Both citations are m001's full gold set. The Neo4j driver and the 4,629-surface entity index
 are built once at startup; the psycopg connection is per-request.
 
+## Phase 5 results
+
+Two systems, the same 65 questions, the same synthesiser, the same citation contract. The
+only difference is retrieval: the baseline embeds the question, takes the top 10 passages and
+makes **no router call at all**, because a plain vector RAG stack has no router to pay for.
+Both arms ran uncached, so latency and cost are measured rather than read back off disk.
+
+### Where the baseline actually fails
+
+Not by hallucinating. Vector-only **refuses 24 of 60** answerable questions where the hybrid
+refuses 7, and the refusals are honest: it retrieves ten passages about the right company and
+correctly reports that the fact asked for is not in them. *"The provided passages list many
+AMD subsidiaries"* — and the question asked how many there are.
+
+| judge verdict | vector-only | graph + vector |
+|---|---|---|
+| correct | 27 | **45** |
+| partial | 3 | 4 |
+| incorrect | 8 | 6 |
+| **refused an answerable question** | **24** | **7** |
+| unverifiable (the eval set, not the system) | 3 | 3 |
+
+That is the failure mode this project set out to find. A two-hop question names one entity and
+asks about something reached through another, so the passages that answer it never share
+enough surface with the question to rank. Nothing is wrong with the retrieval — the question
+is not a retrieval question.
+
+### Two instruments, never blended
+
+| slice | n | keyed | key: vector | key: hybrid | judge: vector | judge: hybrid |
+|---|---|---|---|---|---|---|
+| 1-hop | 30 | 23 | 0.478 | 0.826 | 0.633 | 0.767 |
+| 2-hop | 10 | 10 | 0.000 | 0.500 | 0.100 | 0.500 |
+| 3-hop | 12 | 10 | 0.000 | 0.500 | 0.083 | 0.417 |
+| aggregation | 8 | 8 | 0.000 | 1.000 | 0.125 | 0.875 |
+| out-of-scope | 5 | 5 | 1.000 | 1.000 | 1.000 | 1.000 |
+| all | 65 | 56 | 0.286 | 0.750 | 0.415 | 0.692 |
+
+- **The key** has no opinion: `expected_count` for aggregation, and for every mined question
+  the far endpoint of the edge it was templated off — 43 of 47 rows carry one, matched
+  through the alias surfaces resolution already mined. Two templates key on nothing and say
+  so: *"what does X supply to Y"* is answered by a product, not by an endpoint.
+- **The judge** reads the filing text that justified the edge and grades the fact asked for.
+
+The key is a **floor**, and not a neutral one — it matches on surface form, and the graph arm
+answers in canonical entity names while the baseline answers in filing prose. That is exactly
+why it is not the only instrument, and why the two are reported side by side rather than
+averaged.
+
+### The instrument was wrong twice before it was right
+
+Every number before this phase was about *retrieval* or *provenance*. Neither says an answer
+is correct. Correctness needs a grader, and a grader is an instrument that has to be measured
+first — this project has twice shipped an eval that could not fail.
+
+**Version 1** graded against gold chunks alone, four of them, truncated to 4,000 characters.
+The key and the judge disagreed on 19 of 48 hybrid answers, almost all `key=correct,
+judge=incorrect`. A one-directional disagreement is a bias, not noise, so the disagreements
+got read:
+
+- 14 of 65 questions carry more than four gold chunks. `m039` has nine, the judge saw four,
+  and truthfully reported that the reference said nothing about competitors — a verdict about
+  a reference this repo had crippled, published as a verdict about the answer.
+- `m005`'s supporting sentence sits at character 3,521 of its chunk. Per-chunk truncation is
+  a coin flip on whether the graded evidence is even visible.
+- Gold sets are floors — the README has said so since Phase 2 — and the judge treated them as
+  exhaustive. Applied Materials was marked wrong for naming Santa Clara, Intel for naming the
+  European Commission. Both true; neither in a one-chunk reference.
+
+The third is the one that matters: **penalising unverifiable additions penalises the arm that
+retrieves more**, on the exact axis the benchmark claims to measure.
+
+**Version 2** fixed the reference and still broke its own rule. Intel's answer named the SEC
+(the keyed answer) *and* the European Commission, and came back incorrect for "contradicting
+the reference which only lists the U.S. SEC". The reference does not say *only*. Absence is
+not contradiction, and the prompt now says so in as many words.
+
+What made both findable is that the departures are printed **per row, by qid**. As an
+aggregate, version 1 read as 60% agreement and looked like judge noise; as a list it read as
+one failure mode repeated nineteen times. Hybrid key agreement across the three versions:
+**29/48 → 42/48 → 47/48**, the last with a single override, `m039`, which is an omission
+correctly downgraded to partial.
+
+### The judge is validated before it is quoted
+
+`kgrag bench` runs three checks and prints them above the results:
+
+| check | vector-only | graph + vector |
+|---|---|---|
+| A. reproduces the exact count key | 7/8 | 7/8 |
+| B. agrees with the structural key | 44/48 | 47/48 |
+| C. rejects an answer graded against a *different* question | 51/53 | — |
+
+**C is the one that bites.** A judge that rubber-stamps plausible text passes A and B and
+fails only this. Below 90% rejection, `bench` exits instead of publishing. The two leaks
+(`m034→m036`, `m040→m041`) are adjacent questions from the same template family — *"where do
+the competitors of X's company operate"* twice over — so the control is adversarially hard
+rather than random, and those two are where it should leak.
+
+A is a **sanity check, not an independent measurement**, and is labelled as one: the
+aggregation reference carries the verified count, because the gold chunk is a page of an
+Exhibit 21 and asking a model to count 67 names off it would grade the judge's arithmetic.
+
+### `expected_count` is exact about the graph, and the graph is not the world
+
+The judge overrode the exact count key once, and it was right. *"How many directors sit on the
+board of Wolfspeed?"* — the graph says 38, the proxy says seven. Wolfspeed's `DIRECTOR_OF`
+edges are a union over filings and periods; a board is a snapshot on a date.
+
+That is a real limit on the number this project had been calling its only judgement-free
+accuracy metric. Counts over things a filing enumerates once — subsidiaries in an Exhibit 21,
+locations of operation — hold. The row stays in the eval set: it is not wrong, it is measuring
+the graph, and deleting the one question that exposes the gap between the graph and the world
+is exactly the eval-set edit this project keeps refusing to make.
+
+### What the graph arm still gets wrong
+
+The instrument that scores the benchmark also names the failures, and they sort into three
+shapes:
+
+- **Chains answered at the wrong end.** *"Who competes with the customers that Teradyne
+  supplies?"* returned Teradyne's own competitors. The traversal walked the chain correctly;
+  `verbalise()` then flattened it into 20 unordered sentences with no marking of which edge is
+  the terminal hop, and the model cannot recover chain position from that. This is the largest
+  remaining fixable defect and it is a rendering bug, not a retrieval one.
+- **Seven refusals on answerable questions**, the honest kind: the traversal reached the
+  entity and the terminal hop's evidence was not in the top-10 passages.
+- **One extraction error the judge caught that citation validation never could.** *"Allegro
+  MicroSystems Argentina S.A. is incorporated in Argentina and Uruguay"* — correctly cited,
+  and the filing says Uruguay. The graph inferred a jurisdiction from a company's name.
+
+The last one is the phase's real lesson. **A correctly-cited answer can still be wrong.**
+Citation validation is a guarantee about provenance and says nothing about relevance or
+truth; 319 citations resolved, zero invented, and the system still published a jurisdiction
+it inferred from a name.
+
 ## Stack
 
 Python 3.12 · Neo4j · pgvector · Fireworks (`gpt-oss-120b`, `qwen3-embedding-8b`) · FastAPI
@@ -423,6 +602,8 @@ uv run kgrag verify         # the gate: graph, vector store, and the join betwee
 
 uv run kgrag route          # route each question, measure the decision
 uv run kgrag answer         # grounded answers; --constrained, --no-cache, --fresh
+uv run kgrag answer --baseline --no-cache   # the vector-only arm, no router, no graph
+uv run kgrag bench          # judge both arms and print the benchmark table
 uv run uvicorn kgrag.api:app
 ```
 
