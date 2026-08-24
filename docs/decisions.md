@@ -283,3 +283,109 @@ trips it, not so high that it stops being a gate. The Exhibit-21 subsidiary-shel
 (~39 companies) is real but small and would require touching the extraction prompt and
 re-running against real chunks to fix — left as a known limitation rather than pursued
 for Phase 1.
+
+## Phase 2: three embedding widths, because "truncation is principled" is a claim, not a result
+
+`qwen3-embedding-8b` returns 4096 dimensions and pgvector will not build an HNSW index
+above 2,000 (`vector`) or 4,000 (`halfvec`). So the production column has to be a
+truncation — there is no version of this where the native width ships. Qwen3 is
+Matryoshka-trained, which is the standard justification for truncating, and it would have
+been easy to cite that and embed at 1024 without checking.
+
+Embedded the whole corpus at 1024, 2000, and 4096 instead ($0.57, 129 API calls) and scored
+all three on the same question set. Mean R@10: **1024 = .469, 2000 = .443, 4096 = .458.**
+A paired bootstrap over per-question differences (10,000 resamples, fixed seed, paired
+because every width answers the same questions) puts every pairwise interval across zero:
+
+| | difference | 95% CI | |
+|---|---|---|---|
+| 1024 vs 2000 | +0.0266 | [-0.0186, +0.0891] | within noise |
+| 1024 vs 4096 | +0.0112 | [-0.0433, +0.0769] | within noise |
+| 2000 vs 4096 | -0.0154 | [-0.0481, +0.0077] | within noise |
+
+So truncation to a quarter of the native width costs nothing detectable at n=52, and 1024
+ships. Worth noting what this does *not* say: 52 questions cannot resolve a small real
+difference, so this is "no measurable difference", not "provably identical". The interval
+is published rather than the point estimate for that reason.
+
+The handoff's version of this experiment proposed embedding "the 20 gold chunks at 4096".
+That cannot work — ranking needs the entire corpus present at each width or there is
+nothing for the gold chunks to be ranked against.
+
+## The embedding cache key had to change in the same edit as the `dimensions` parameter
+
+`fireworks.embed()` keyed its cache on `sha256(f"{model}|{text}")`. Adding a `dimensions`
+parameter without touching that key would have made the cache return 4096-dim vectors for
+1024-dim requests — several thousand entity-name vectors were already cached at native
+width from `kgrag resolve`, so the collision was not hypothetical. A dimension mismatch
+surfaces far downstream, if at all.
+
+The dimension is suffixed only when one is requested, so `dimensions=None` hashes exactly
+as before and resolve's existing cache stays valid rather than being invalidated for
+nothing. There is a test asserting both halves of that.
+
+## At 2,743 rows the planner silently answers "ANN" queries exactly
+
+The first ANN-vs-exact sweep produced a non-monotonic curve: `ef_search=4` scored recall
+1.000 while `ef_search=40` scored 0.968. HNSW search is deterministic, so higher `ef` can
+never retrieve less — the curve was measuring something other than what it claimed.
+
+The latency column gave it away. Every 1.000 row ran at ~7 ms, exactly the full-scan
+baseline, while the sub-1.0 rows ran at ~2 ms. On a 2,743-row table Postgres costs a
+sequential scan cheaper than an HNSW probe and takes it *even when the index exists*, so
+roughly half the "ANN" measurements were second exact scans agreeing perfectly with the
+first. Disabling index scans for the exact arm was not enough; the ANN arm has to have
+sequential scans disabled too. Confirmed with `EXPLAIN` that both plans now use the
+intended access path.
+
+Forced, the curve is monotonic and the sweep says something:
+
+| ef_search | 1 | 2 | 4 | 10 | 40 | 100 | 400 |
+|---|---|---|---|---|---|---|---|
+| recall@10 (1024) | .079 | .174 | .381 | .900 | .968 | .993 | 1.000 |
+
+`ef_search` is swept down to 1 because the conventional range does not bend at this scale.
+Two honest caveats belong with this table. An exact scan over 2,743 chunks is ~7 ms, so
+HNSW here is a demonstration of the technique rather than a necessity — at ef=100 it is
+~2.6 ms for .993 recall, a real but small win. And the emb_2000 index reaches full recall
+almost immediately while showing no latency benefit at all over its own exact baseline
+(10.3 ms vs 10.9 ms), which is a second, independent reason 1024 is the right production
+column.
+
+## The retrieval eval set is derived from the graph, and built to be able to lose
+
+Phase 1's resolution eval reported P=1.000 while the pipeline was merging ~1,957 pairs
+wrongly, purely because the sampler could not surface the failing shape. An eval of
+single-fact lookups would repeat that mistake exactly: it would report good recall and say
+nothing about the multi-hop questions the graph exists to win.
+
+Labels come from filing structure, the same principle as `kgrag mine-pairs`. Every edge
+already carries the `chunk_ids` whose text justified it, and the evidence-span check means
+those chunks demonstrably contain the supporting sentence — so the chunk ids *are* the gold
+set, with no hand-judgement and no model call. 47 mined questions across all 14 relation
+types and 1/2/3 hops, plus 10 hand-written cases the miner structurally cannot produce
+(aggregations answered by no single chunk, paraphrases sharing almost no surface tokens
+with their target, and out-of-scope questions that should retrieve nothing).
+
+Three decisions that keep the numbers meaningful:
+
+- **Multi-hop questions never name the middle entity.** Naming it makes the question two
+  lookups; withholding it is what a single query embedding has no way to bridge.
+- **A chain is discarded unless its gold chunks span more than one filing.** A chain that
+  happens to be described inside one chunk is a 1-hop question in costume, and keeping it
+  would have quietly inflated multi-hop recall.
+- **Questions are deduplicated by text with their gold sets merged.** Two edges can
+  template to the same sentence — "Which company did Teradyne acquire?" when Teradyne
+  acquired three — and emitting it twice with different answer keys makes it unanswerable:
+  retrieval finding one acquisition gets marked wrong for the other.
+
+Templated phrasing is the known ceiling. It is deliberate: the templates hand vector search
+canonical entity names verbatim, which *helps* it. Multi-hop recall collapsing under
+conditions that favourable is a stronger result than it would be with natural phrasing.
+
+Result at 1024, exact search: **1-hop .586 @10, 2-hop .288, 3-hop .328.** Multi-hop at
+roughly half of single-hop, which is the Phase 5 baseline being established rather than a
+Phase 2 failure — a flat curve here would have meant the eval set was too easy to bother
+running. The gold sets are floors, not exhaustive: other chunks may also answer a question,
+and that bound applies identically to all three widths, which is what keeps the comparison
+between them fair.

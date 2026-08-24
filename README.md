@@ -12,7 +12,7 @@ related entities — the class of question where plain vector RAG quietly fails.
 | Phase | | |
 |---|---|---|
 | 1 | Entity + relationship extraction into Neo4j | **complete** — 4,496 entities, 4,685 edges, gate passing |
-| 2 | pgvector index over the same chunks | not started |
+| 2 | pgvector index over the same chunks | **complete** — 2,743 chunks × 3 widths, recall measured by hop count |
 | 3 | Question router (graph vs. vector) | not started |
 | 4 | Grounded answer synthesis with validated citations | not started |
 | 5 | Benchmark vs. vector-only baseline | not started |
@@ -85,6 +85,71 @@ nothing about whether anything correct is inside it.
   recall comparison.
 - **2 chunks were never extracted**, quarantined after repeated API failures.
 
+## Phase 2 results
+
+2,743 chunks embedded into pgvector at three widths for **$0.57**, joined to the graph on
+the chunk ids Phase 1 minted.
+
+### Retrieval recall@k, by hop count
+
+Exact search at 1024 dims, against 52 answerable questions:
+
+| slice | n | R@1 | R@5 | R@10 | R@20 |
+|---|---|---|---|---|---|
+| 1-hop | 30 | 0.233 | 0.444 | **0.586** | 0.628 |
+| 2-hop | 10 | 0.178 | 0.268 | **0.288** | 0.370 |
+| 3-hop | 12 | 0.142 | 0.328 | **0.328** | 0.398 |
+| all | 52 | 0.202 | 0.384 | 0.469 | 0.525 |
+
+**Multi-hop retrieval runs at roughly half of single-hop.** That gap is the point — it is
+the vector-only baseline the Phase 5 benchmark measures the graph against, and a flat curve
+here would have meant the question set was too easy to be worth running.
+
+The set is built to be able to lose. Labels come from filing structure rather than
+judgement, the same principle as `kgrag mine-pairs`: every edge already carries the
+`chunk_ids` whose text justified it, so those chunk ids are the answer key. Multi-hop
+questions never name the middle entity, and a chain is discarded unless its evidence spans
+more than one filing — a chain described inside a single chunk is a 1-hop question in
+costume. 47 questions are mined this way; 10 more are hand-written for the shapes the miner
+cannot produce (aggregations, paraphrases, out-of-scope refusals).
+
+Gold sets are floors, not exhaustive — other chunks may also answer a question. The bound
+applies identically to every width, which is what keeps the comparison below fair.
+
+### Embedding width: 1024 vs 2000 vs 4096
+
+`qwen3-embedding-8b` emits 4096 dims and pgvector will not HNSW-index above 2,000, so the
+production column has to be a truncation. Qwen3 is Matryoshka-trained, which is the usual
+justification for truncating — so the whole corpus was embedded at all three widths and
+scored, instead of citing it.
+
+| | mean R@10 | vs 1024 | 95% CI |
+|---|---|---|---|
+| **1024** (production) | **0.469** | — | — |
+| 2000 | 0.443 | +0.0266 | [-0.0186, +0.0891] |
+| 4096 (native, unindexable) | 0.458 | +0.0112 | [-0.0433, +0.0769] |
+
+Every interval crosses zero on a paired bootstrap, so truncation to a quarter of the native
+width costs nothing detectable at n=52. Not "provably identical" — 52 questions cannot
+resolve a small real difference — which is why the interval is published, not the point
+estimate.
+
+### HNSW recall vs exact search
+
+| ef_search | 1 | 2 | 4 | 10 | 40 | 100 | 400 |
+|---|---|---|---|---|---|---|---|
+| recall@10 | .079 | .174 | .381 | .900 | .968 | .993 | 1.000 |
+
+At **2,743 chunks an exact scan is already ~7 ms**, so HNSW here is a demonstration of the
+technique rather than a necessity — ef=100 gives .993 recall at ~2.6 ms, a real but small
+win. Saying so is better than implying otherwise.
+
+Getting this curve to mean anything required forcing *both* planner arms. Left alone,
+Postgres costs a sequential scan cheaper than an HNSW probe on a table this small and takes
+it even when the index exists, silently answering the "ANN" arm exactly and reporting
+recall 1.000 at every `ef_search`. The tell was non-monotonicity — ef=4 scoring above ef=40
+— with ANN latencies sitting exactly on the exact baseline.
+
 ## Stack
 
 Python 3.12 · Neo4j · pgvector · Fireworks (`gpt-oss-120b`, `qwen3-embedding-8b`) · FastAPI
@@ -106,13 +171,15 @@ uv run kgrag extract        # cost-probes first; rerun with --yes to commit
 uv run kgrag mine-pairs     # derive resolution labels + declared aliases from the filings
 uv run kgrag resolve        # collapse surface forms into canonical entities
 uv run kgrag load           # MERGE into Neo4j
-uv run kgrag verify         # the Phase 1 gate
+uv run kgrag embed          # same chunks into pgvector; --yes to commit the spend
+uv run kgrag verify         # the gate: graph, vector store, and the join between them
 ```
 
-`kgrag all` runs fetch → load in order. Run `mine-pairs` before `resolve` either way: it
+`kgrag all` runs fetch → embed in order. Run `mine-pairs` before `resolve` either way: it
 writes `data/aliases.jsonl`, and without it resolution loses the aliases the filings declare
 about themselves. Tuning and comparison live in `kgrag candidates`, `kgrag sweep`, and
-`kgrag bakeoff` (see Phase 1 results).
+`kgrag bakeoff` (see Phase 1 results). `kgrag mine-questions` derives the retrieval eval
+set from the graph, and `kgrag recall` scores it.
 
 ## Corpus
 

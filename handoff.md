@@ -1,6 +1,6 @@
 # Handoff — Knowledge Graph RAG for Enterprise Data
 
-_Last updated: 2026-08-23_
+_Last updated: 2026-08-24_
 
 ---
 
@@ -8,8 +8,8 @@ _Last updated: 2026-08-23_
 
 Portfolio project 1 of an AI/ML engineering job-search portfolio: a hybrid knowledge-graph +
 vector RAG system over SEC filings, built entirely on open-weight models (Fireworks-hosted,
-$55 budget) instead of the Claude API the original brief specced. **Phase 1 of 5 is complete;
-Phase 2 ("Build the vector index alongside the graph") is the current work.** See
+$55 budget) instead of the Claude API the original brief specced. **Phases 1 and 2 of 5 are complete;
+Phase 3 ("Route questions to the right retrieval path") is the current work.** See
 [rag-enterprise-data.md](rag-enterprise-data.md) (gitignored, local-only — the original spec)
 and [docs/decisions.md](docs/decisions.md) for the full design-decision log.
 
@@ -29,13 +29,22 @@ Every relation passed `ontology.validate()` with zero drops. But the same 20 chu
 305 mentions from the model, so gold is a ~3x-sparse *subset* of truth, not an answer key
 (see Key Invariants).
 
+**Phase 2 is complete and the gate passes.** 2,743 chunks in pgvector at 1024/2000/4096
+dims for **$0.57**; `uv run kgrag verify` → `PASS` now covers both stores plus the join
+between them (20/20 sampled chunk_ids resolve to a Neo4j edge). Retrieval measured:
+1-hop R@10 .586, 2-hop .288, 3-hop .328 — multi-hop at roughly half of single-hop, which is
+the Phase 5 baseline. All three embedding widths are statistically indistinguishable, so
+1024 ships. See README "Phase 2 results" and `docs/decisions.md`.
+
 **Phase 1 is complete and the gate passes.** `uv run kgrag verify` → `PASS`: 4,496 nodes,
 4,685 edges, 0 self-loops, all 14 relation types populated, shared-director and 3-hop paths
 both non-empty. `uv run pytest tests/` — 21 tests (one skips when Neo4j is down).
 README's "Phase 1 results" section has the full numbers; `docs/decisions.md` has the
 reasoning.
 
-**Docker is currently STOPPED.** It was shut down to free memory for the local model in the
+**Docker is currently RUNNING** (both containers healthy).
+
+**Docker was previously STOPPED.** It was shut down to free memory for the local model in the
 bakeoff — this machine has 8 GB and swap was near capacity. `docker compose up -d` restores
 it; the Neo4j volume is intact, so the graph is still there and does not need reloading.
 
@@ -74,39 +83,29 @@ it; the Neo4j volume is intact, so the graph is still there and does not need re
 - **The gold set is ~3x under-labeled** (103 mentions where the model finds 305), so it
   supports recall comparisons only. Do not quote precision or F1 from `kgrag bakeoff`.
 
-### Phase 2 specifics — read before writing any embedding code
+### Phase 3 specifics — read before writing any routing code
 
-- **`fireworks.embed()`'s cache key does NOT include the embedding dimension.** It is
-  `sha256(f"{model}|{text}")`. Several thousand entity-name embeddings are already cached at
-  the native **4096** dims from `kgrag resolve`. If you add a `dimensions=` parameter without
-  adding it to that key, the cache will silently hand back 4096-dim vectors for a 1024-dim
-  request — a dimension mismatch that surfaces far downstream, if at all. **Add `dimensions`
-  to the cache key in the same edit that adds the parameter.**
-- **`qwen3-embedding-8b` returns 4096 dims natively, which pgvector cannot HNSW-index.**
-  pgvector caps index dimensions at 2,000 for `vector` and 4,000 for `halfvec`, so 4096 can be
-  stored but never indexed. Fireworks accepts an OpenAI-style `dimensions` parameter on the
-  embeddings endpoint (verified working — returns exactly 1024 when asked). Qwen3 is
-  Matryoshka-trained, so truncation is principled rather than lossy chopping. **Plan: embed at
-  1024.** Comparing retrieval quality at 1024 vs 4096 is a cheap, real measurement worth
-  keeping for the README.
-- **There is no Postgres schema in the repo.** `cypher/schema.cypher` is versioned and applied
-  by `load.apply_schema()`; Postgres has no equivalent. Phase 2 should add one (e.g.
-  `sql/schema.sql` with `CREATE EXTENSION IF NOT EXISTS vector`) and apply it the same way, so
-  both stores are reproducible from the repo rather than from memory.
-- **Embed all 2,743 chunks in `data/chunks.jsonl`, not the 2,741 in `extractions.jsonl`.** The
-  2 quarantined chunks have no graph entities but should still be retrievable by vector.
-- **`data/entities.jsonl` gives entity→chunks; Phase 2 needs chunk→entities.** Invert
-  `mention_chunks` in memory; there is no stored reverse index.
-- **Entity ids shift if `normalize()` changes.** `canonical_id()` hashes
-  `min(normalized names in cluster)`, so any normalisation change moves ids for affected
-  clusters — including the optional 45-self-loop fix below, which requires exactly that. The
-  embeddings themselves depend only on chunk text, so this is a metadata `UPDATE` rather than
-  a re-embed, but decide *before* writing entity ids into Postgres whether they are frozen.
-- **Design the recall@k set so it can see failure.** Phase 1's resolution eval returned a
-  clean P=1.0 while the pipeline was merging ~1,957 pairs wrongly, purely because the sampler
-  could not surface the failing shape. The same trap applies here: an eval of single-fact
-  lookups will report excellent recall and tell you nothing about the multi-hop questions
-  Phase 5 exists to win. Include the cases vector search *should* lose.
+- **1024 is the production embedding column.** All three widths were measured and are
+  statistically indistinguishable (paired bootstrap, every CI crosses zero). `emb_2000` and
+  `emb_4096` are kept for the README table; do not query them in production code.
+- **`emb_4096` has no index and never can** — pgvector caps HNSW at 2,000 dims. A query
+  against it is always a full scan.
+- **Force the planner in any retrieval benchmark.** At 2,743 rows Postgres costs a seq scan
+  cheaper than an HNSW probe and takes it even when the index exists, silently turning an
+  "ANN" measurement into a second exact scan that reports recall 1.000 everywhere. Both arms
+  need forcing: `enable_seqscan = off` for the index arm, `enable_indexscan = off` for the
+  exact arm. This already bit once — the tell was a non-monotonic recall curve.
+- **`fireworks.embed()` now takes `dimensions`, and it IS in the cache key** — but only as a
+  suffix when non-None, so `dimensions=None` still hashes as it did in Phase 1 and resolve's
+  entity-name cache stays valid. Do not "simplify" that asymmetry away.
+- **Entity ids are deliberately not frozen.** `kgrag embed` upserts metadata in a statement
+  separate from the vector UPDATEs and skips chunks whose column is already populated, so a
+  resolution change refreshes `entity_ids` for $0.00.
+- **`eval/questions.jsonl` is committed and half of it is not regenerable.** `kgrag
+  mine-questions` rewrites the mined rows and preserves any row with `"source": "hand"`.
+  The 10 hand-written rows are as unrecoverable as `data/overrides.jsonl`.
+- **Retrieval gold sets are floors, not exhaustive.** Quote recall as a lower bound. The
+  bound is identical across widths, which is what makes cross-width comparison valid.
 
 ---
 
@@ -137,6 +136,10 @@ it; the Neo4j volume is intact, so the graph is still there and does not need re
   the volume and cost a full reload.
 - `data/overrides.jsonl` — 16 hand-decided pairs, not regenerable, the only file under
   `data/` that git tracks. `kgrag mine-pairs` does not touch it.
+- **The 10 hand-written rows in `eval/questions.jsonl`** (`"source": "hand"`). Same status
+  as `overrides.jsonl`: not regenerable. `kgrag mine-questions` preserves them on rerun.
+- **The pgvector volume holds 2,743 chunks × 3 widths ($0.57 of embedding).** Like the
+  Neo4j volume: `docker compose down -v` drops it and costs a full re-embed.
 - The README's Phase 1 results are written but the "What broke" narrative section is
   **deliberately deferred to the end of the project** — the user wants documentation polish
   done once, after Phase 5, not per-phase.
@@ -145,39 +148,37 @@ it; the Neo4j volume is intact, so the graph is still there and does not need re
 
 ## Next Step
 
-**Build the Phase 2 pgvector index, at 1024 dimensions.** Concretely, in order:
+**Phase 3: route questions to the graph path or the vector path.** Both stores are built,
+measured, and joined. Concretely, in order:
 
-1. `docker compose up -d`, then confirm Postgres on host port **5433** (not 5432) with
-   `POSTGRES_USER/DB=kgrag`. The image is `pgvector/pgvector:pg17`.
-2. Add `sql/schema.sql`: `CREATE EXTENSION IF NOT EXISTS vector`, plus a `chunks` table keyed
-   on `chunk_id TEXT PRIMARY KEY` with `embedding vector(1024)`, `ticker`, `section_path`,
-   `filing_date`, and the mentioned entity ids. Apply it the way `load.apply_schema()` applies
-   the Cypher schema, so setup lives in the repo.
-3. Give `fireworks.embed()` a `dimensions` parameter **and add it to the cache key in the same
-   edit** (see Phase 2 specifics above — this is the one change that can silently corrupt the
-   store).
-4. Add a `kgrag embed` stage that reads all 2,743 rows of `data/chunks.jsonl`, embeds at 1024,
-   and upserts. Follow the existing stage pattern in `run.py`; `psycopg` is not yet a
-   dependency, so add it.
-5. Build the HNSW index, then measure **recall@k against exact search** across `ef_search`
-   values. Note honestly in the results that at 2,743 chunks an exact scan is already fast, so
-   HNSW here is a demonstration rather than a necessity — saying so is better than implying
-   otherwise.
-6. Cheap bonus worth taking: embed the 20 gold chunks at 4096 as well and compare retrieval
-   quality against 1024, so the truncation decision is measured rather than asserted.
+1. A cheap router: one small-model call with a few-shot prompt returning an enum
+   (`graph` | `vector` | `both`), plus a low-confidence fallback that runs both and merges.
+   `chat_json` already does constrained decoding against a schema, so the enum is
+   unreachable-if-invalid rather than merely validated — reuse it.
+2. On the graph path: extract entities from the question, resolve them to node ids, run a
+   **parameterised** Cypher query from a template library keyed by query type. Never let the
+   model emit raw Cypher. `load.py` already enforces exactly this rule at write time (the
+   predicate is interpolated only after passing through `RelationType(...)`) — the same
+   discipline applies at read time. `cypher/schema.cypher` has a fulltext index on
+   `e.name, e.aliases` that exists for this lookup.
+3. On the vector path: `retrieve._topk(conn, 1024, vector, k, exact=True)` is already the
+   query. **1024 is the production column** — see Phase 2 results.
+4. **Log every routing decision** with the question and the outcome. Phase 5 needs this and
+   it cannot be reconstructed later.
+5. `eval/questions.jsonl` already carries `hops` and 5 out-of-scope questions with empty
+   gold sets — that is a ready-made router eval. A question with `hops >= 2` should route to
+   the graph; an out-of-scope one should refuse.
 
-Optional Phase 1 cleanup, none of it blocking, and none of it worth doing before Phase 2:
+Optional cleanup, none of it blocking:
 
-- The 45 remaining `self_loop_after_resolution` edges. Fixing them means not stripping
-  national legal forms (`GmbH`, `AG`, `Oy`) in `normalize()` the way generic ones (`Inc`,
-  `Corp`) are stripped — those mark a distinct incorporation. Would need a resolve/load rerun.
-- Exhaustively re-label the 20 gold chunks so the bakeoff can report precision. Real manual
-  work; only worth it if a precision number is actually wanted.
-- ~39 orphan companies are Exhibit 21 subsidiary shells that never got a `SUBSIDIARY_OF`
-  edge, likely because a bare table row carries no sentence for the evidence-span check to
-  match. Would need an extraction-prompt change and a partial re-extract.
-
----
+- The 45 remaining `self_loop_after_resolution` edges (unchanged from Phase 1). Fixing them
+  means not stripping national legal forms (`GmbH`, `AG`, `Oy`) in `normalize()`. Entity ids
+  are deliberately NOT frozen, so this now costs a `resolve` + `embed` rerun that refreshes
+  `entity_ids` in Postgres for **$0.00** and re-embeds nothing.
+- Exhaustively re-label the 20 extraction gold chunks so the bakeoff can report precision.
+- ~39 orphan Exhibit 21 subsidiary shells with no `SUBSIDIARY_OF` edge.
+- The retrieval question templates are stilted by design (see decisions.md). One model pass
+  to naturalise the phrasing is the upgrade if 1-hop recall ever looks implausibly high.
 
 ## Open Questions / Blockers
 
@@ -214,3 +215,13 @@ _Append-only. One line per session — never overwrite previous entries._
   overshoot, a silent 11.6-hour connection stall from no client timeout, and two exception
   types extract_one wasn't quarantining); built and validated the 20-chunk hand-labeled gold
   set for the model bakeoff.
+- 2026-08-24: Closed Phase 2. Embedded 2,743 chunks into pgvector at three widths ($0.57)
+  and measured rather than asserted the two decisions that were open: Matryoshka truncation
+  to 1024 costs nothing detectable (paired bootstrap, all pairwise CIs cross zero), and the
+  retrieval eval shows multi-hop at roughly half of single-hop, which is the Phase 5
+  baseline. Two bugs caught by the measurements disagreeing with themselves: the ANN sweep
+  was non-monotonic because Postgres prefers a seq scan at 2,743 rows and was silently
+  answering the "ANN" arm exactly (both planner arms now forced, confirmed with EXPLAIN),
+  and the question miner emitted duplicate question text with different gold sets, which
+  makes an eval unanswerable. Also corrected the handoff's own plan: it proposed embedding
+  20 gold chunks at 4096, which cannot rank against anything.
