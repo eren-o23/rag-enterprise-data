@@ -49,10 +49,14 @@ JUDGE_MODEL = "accounts/fireworks/models/gpt-oss-120b"
 JUDGE_TIMEOUT = 30.0
 JUDGE_ATTEMPTS = 3
 
-#: Gold chunks shown to the judge. 3-hop questions carry up to a dozen; the evidence for the
-#: claim is in the first few, and the rest is prompt cost. Truncation is reported.
-REFERENCE_CHUNKS = 4
-REFERENCE_CHARS = 4_000
+#: Gold chunks shown to the judge. The first version showed four, truncated to 4,000 chars
+#: each, on the theory that the evidence would be in the first few. It is not: `m039` has
+#: nine gold chunks and the judge saw four, then correctly reported that the reference said
+#: nothing about competitors -- a verdict about a reference this module crippled, published
+#: as a verdict about the answer. Whole chunks now, all of them, up to a total the prompt
+#: can carry, and the reference says so when it had to stop.
+REFERENCE_CHUNKS = 12
+REFERENCE_CHARS = 48_000
 
 #: The one-time cost of building the graph, which the vector baseline does not pay. Phase 1
 #: extraction plus Phase 2 embedding, both printed by their own stages at the time.
@@ -125,10 +129,12 @@ def key_score(
 
 
 class Verdict(BaseModel):
-    verdict: Literal["correct", "partial", "incorrect"] = Field(
-        description="correct: the answer states what the reference supports. partial: part "
-        "of it is right and nothing is wrong. incorrect: it contradicts the reference, "
-        "answers a different question, or states something the reference does not support."
+    verdict: Literal["correct", "partial", "incorrect", "unverifiable"] = Field(
+        description="correct: the answer gives the fact the question asks for and nothing "
+        "in it contradicts the reference. partial: it gives some of that fact and nothing "
+        "contradicts. incorrect: it contradicts the reference, or answers a different "
+        "question. unverifiable: the reference does not contain the fact asked for, so no "
+        "verdict is possible."
     )
     reason: str = Field(description="One short sentence. Name the specific mismatch.")
 
@@ -137,21 +143,27 @@ VERDICT_SCHEMA = _strict(Verdict.model_json_schema())
 
 SYSTEM = """You grade answers to questions about SEC filings against reference evidence.
 
-You are given a QUESTION, REFERENCE material taken from the filings, and an ANSWER produced
-by a retrieval system. Decide whether the answer is correct.
+You are given a QUESTION, REFERENCE material drawn from the filings, and an ANSWER produced
+by a retrieval system. Decide whether the answer gives the fact the question asks for.
 
-RULES:
-1. Grade only against the reference. Do not use outside knowledge about these companies.
-2. The reference is evidence, not a model answer. An answer phrased differently, naming an
-   entity by a different surface form, or adding true detail from the same evidence is still
-   correct.
-3. An answer that is about the right subject but does not answer the question asked is
-   incorrect, however well written it is.
-4. An answer that states a number, a name or a relationship the reference contradicts is
-   incorrect.
-5. If the reference does not settle it, say incorrect and name what is missing. Do not give
-   the benefit of the doubt -- an unverifiable answer is not a correct one.
-6. Use partial only when part of the answer is right and no part of it is wrong."""
+THE REFERENCE IS A FLOOR, NOT AN ANSWER KEY. It is the filing text that is known to support
+an answer, and the corpus contains far more than it. So:
+
+1. Judge the fact the QUESTION asks for. That is the only thing being graded.
+2. Extra detail beyond the reference is NOT an error. An answer that names five operating
+   locations where the reference names two is correct if the two are among them and none of
+   the five contradicts the reference. Marking it down measures the reference's sparsity.
+3. Mark incorrect only when the answer contradicts the reference, or when it answers a
+   different question than the one asked -- however fluent and well-sourced it looks.
+4. Different wording and different surface forms are the same answer. "Ernst & Young (EY)"
+   is "Ernst & Young LLP"; a subsidiary named in full is the same entity as its short name.
+5. When the reference gives a KNOWN CORRECT ANSWER, an answer that states it is correct.
+   That answer is one correct answer, not necessarily the only one -- another answer the
+   reference supports is correct too.
+6. When the reference simply does not contain the fact asked for, say unverifiable. Do not
+   guess, and do not fall back to incorrect: an answer that cannot be checked is a gap in
+   the evidence, not a wrong answer, and calling it wrong would publish this reference's
+   limits as the system's."""
 
 
 def reference(conn: psycopg.Connection, question: dict[str, Any]) -> str:
@@ -174,11 +186,30 @@ def reference(conn: psycopg.Connection, question: dict[str, Any]) -> str:
             f"VERIFIED COUNT (computed over the whole knowledge graph): "
             f"{question['expected_count']}"
         )
-    texts = answer_mod.passages(conn, question["gold_chunk_ids"][:REFERENCE_CHUNKS])
+    if question.get("expected_answers"):
+        blocks.append(
+            "KNOWN CORRECT ANSWER (one of possibly several): "
+            + "; ".join(question["expected_answers"])
+        )
+    ids = question["gold_chunk_ids"][:REFERENCE_CHUNKS]
+    texts = answer_mod.passages(conn, ids)
+    used = 0
     for passage in texts:
+        # Whole chunks. `m005`'s evidence sits at character 3,521 of a 3,556-character
+        # chunk, so a per-chunk truncation drops exactly the sentence being graded.
+        if used + len(passage["text"]) > REFERENCE_CHARS:
+            break
+        used += len(passage["text"])
         blocks.append(
             f"[{passage['company']} · {passage['form']} · {passage['section_path']}]\n"
-            f"{passage['text'][:REFERENCE_CHARS]}"
+            f"{passage['text']}"
+        )
+    shown = len(blocks) - 1 if question.get("expected_answers") else len(blocks)
+    omitted = len(question["gold_chunk_ids"]) - shown
+    if omitted > 0:
+        blocks.append(
+            f"({omitted} further supporting chunks exist and are not shown. If the fact "
+            "asked for is not above, say unverifiable rather than incorrect.)"
         )
     return "\n\n".join(blocks)
 
@@ -281,9 +312,11 @@ def run(model: str = answer_mod.SYNTH_MODEL, use_cache: bool = True) -> None:
     print("=" * 74)
     print(
         "Two instruments. The key has no opinion: exact counts, the endpoint the question\n"
-        "was templated off, and refusal. The judge reads the filing text that justified the\n"
-        "edge. The key is a floor and it flatters the graph arm, which answers in canonical\n"
-        "entity names; the judge is validated below before any of it is read.\n"
+        "was templated off, and refusal — but it matches on surface form, which flatters the\n"
+        "arm that answers in canonical entity names. The judge reads the filing text that\n"
+        "justified the edge, plus that keyed answer marked as ONE correct answer rather than\n"
+        "the only one, and grades the fact asked for. Validated below before any of it is\n"
+        "read.\n"
     )
 
     with connect() as conn:
@@ -327,24 +360,25 @@ def _validate(
         agree = sum(1 for i in agg if (judged[label][i] == CORRECT) == (keyed[label][i] == "correct"))
         print(f"  A. exact-count sanity   {label:16} {agree}/{len(agg)} agree with expected_count")
 
-    # B. The real one: two instruments built from the same edge through different channels
-    #    -- structured endpoint vs the model reading the filing prose.
+    # B. Where the two instruments part company. The judge is shown the keyed answer, so
+    #    this is a consistency check rather than an independent one -- and the interesting
+    #    numbers are the two kinds of departure, not the agreement rate. A rescue is the
+    #    judge accepting a right answer the key rejected on surface form, which is the
+    #    reason the judge exists. An override is the judge rejecting an answer that names
+    #    the keyed entity while answering a different question, which is the failure mode
+    #    citation validation structurally cannot see.
     print()
-    disagreements: list[tuple[str, str, str, str]] = []
     for label in arms:
         idx = [i for i, q in enumerate(questions)
                if keyed[label][i] is not None and q.get("category") != "aggregation"]
         agree = [i for i in idx if (judged[label][i] == CORRECT) == (keyed[label][i] == "correct")]
+        rescues = [i for i in idx if keyed[label][i] == "incorrect" and judged[label][i] == CORRECT]
+        overrides = [i for i in idx if keyed[label][i] == "correct" and judged[label][i] != CORRECT]
         print(f"  B. key agreement        {label:16} {len(agree)}/{len(idx)} "
               f"({len(agree) / len(idx):.3f})")
-        disagreements += [
-            (label, questions[i]["qid"], str(keyed[label][i]), judged[label][i])
-            for i in idx if i not in set(agree)
-        ]
-    if disagreements:
-        print("\n     disagreements — each is either a judge error or a key blind spot:")
-        for label, qid, key, verdict in disagreements:
-            print(f"       {qid:5} {label:16} key={key:9} judge={verdict}")
+        print(f"       rescued  {len(rescues):>2}  {[questions[i]['qid'] for i in rescues]}")
+        print(f"       overrode {len(overrides):>2}  "
+              f"{[(questions[i]['qid'], judged[label][i]) for i in overrides]}")
 
     # C. The negative control. Every answered row is re-graded against a DIFFERENT question,
     #    so a judge that rubber-stamps anything plausible is caught here and nowhere else.
@@ -413,7 +447,11 @@ def _accuracy(
         print(f"    {l:16} {mix}")
     print(
         "\n  'partial' is reported and never counted as correct. 'refused' is an answerable\n"
-        "  question the system declined -- a miss, but a different kind from a wrong answer."
+        "  question the system declined -- a miss, but a different kind from a wrong answer.\n"
+        "  'unverifiable' is the eval set failing, not the system: the gold chunks do not\n"
+        "  contain the fact asked for, so no verdict is possible. It counts against both\n"
+        "  arms identically, which keeps the delta honest while the rate itself is a\n"
+        "  published limit on what these 65 questions can measure."
     )
 
 
