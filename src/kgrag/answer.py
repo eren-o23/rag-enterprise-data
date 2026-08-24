@@ -156,30 +156,47 @@ def passages(conn: psycopg.Connection, chunk_ids: list[str]) -> list[dict[str, A
     return [by_id[i] for i in chunk_ids if i in by_id]
 
 
-def build_context(facts: list[dict[str, Any]], texts: list[dict[str, Any]]) -> str:
-    """The two labelled blocks, with the chunk id as the citation token in both.
+#: Chunk ids shown per graph fact. An edge corroborated by nine chunks does not need all
+#: nine in the prompt to be citable.
+CITES_PER_FACT = 3
+
+
+def build_context(
+    facts: list[dict[str, Any]], texts: list[dict[str, Any]]
+) -> tuple[str, set[str]]:
+    """The two labelled blocks, and the ids a citation is allowed to name.
 
     The spec asks for graph-derived facts to be kept explicitly separate from retrieved
     passages, and the labels are load-bearing rather than decorative: a graph fact is a
     claim the pipeline already verified against filing text, a passage is raw evidence the
     model still has to read. Telling the model which is which is what lets rule 5 exist.
+
+    **The citable set is returned from here, not computed by the caller.** It has to be
+    exactly what this function printed, and deriving it anywhere else lets the two drift.
+    They did: the caller used the route's top-10 `graph_ids` while this block rendered 20
+    facts carrying up to three ids each, so the model cited ids that were plainly in front
+    of it and the validator called them invented — six answers abandoned as
+    `citation_unrecoverable` for citing their own context correctly.
     """
     blocks: list[str] = []
+    citable: set[str] = set()
     if facts:
         lines = ["GRAPH FACTS (derived from the knowledge graph)"]
         for fact in facts:
-            cite = " ".join(f"[{c}]" for c in fact["chunk_ids"][:3])
-            lines.append(f"{cite} {fact['text']}")
+            shown = fact["chunk_ids"][:CITES_PER_FACT]
+            citable.update(shown)
+            lines.append(" ".join(f"[{c}]" for c in shown) + f" {fact['text']}")
         blocks.append("\n".join(lines))
     if texts:
         lines = ["PASSAGES (retrieved filing text)"]
         for passage in texts[:PASSAGE_LIMIT]:
+            citable.add(passage["chunk_id"])
             lines.append(
                 f"\n[{passage['chunk_id']}] {passage['company']} · {passage['form']} · "
                 f"{passage['section_path']} · {passage['filing_date']}\n{passage['text']}"
             )
         blocks.append("\n".join(lines))
-    return "\n\n".join(blocks)
+    return "\n\n".join(blocks), citable
 
 
 # ---------------------------------------------------------------------------
@@ -242,6 +259,7 @@ def synthesise(
     valid_ids: set[str],
     model: str = SYNTH_MODEL,
     constrain: bool = False,
+    use_cache: bool = True,
 ) -> tuple[Answer, int, list[str], int]:
     """Generate, validate, regenerate on a miss. Returns (answer, attempts, invented, reformatted).
 
@@ -260,6 +278,7 @@ def synthesise(
             payload = fireworks.chat_json(
                 system=SYSTEM, user=_user(question, context, rejected), schema=schema,
                 model=model, timeout=SYNTH_TIMEOUT, attempts=SYNTH_ATTEMPTS,
+                use_cache=use_cache,
             )
         except (APIStatusError, APIConnectionError) as exc:
             return _refusal(f"synthesiser_unreachable:{type(exc).__name__}"), attempts, rejected, reformatted
@@ -300,6 +319,7 @@ def answer(
     model: str = SYNTH_MODEL,
     router_model: str = route_mod.ROUTER_MODEL,
     constrain: bool = False,
+    use_cache: bool = True,
     qid: str | None = None,
     log: bool = True,
 ) -> dict[str, Any]:
@@ -321,9 +341,8 @@ def answer(
         row["vector_ids"] = route_mod.vector_path(conn, question, route_mod.TOP_K)
         row["chunk_ids"] = row["vector_ids"]
 
-    valid_ids = set(row["graph_ids"]) | set(row["vector_ids"])
     texts = passages(conn, row["chunk_ids"])
-    context = build_context(facts, texts)
+    context, valid_ids = build_context(facts, texts)
 
     if row["route"] == "refuse" or not context:
         # The router refused, or retrieval returned nothing. Either way there is nothing to
@@ -333,7 +352,7 @@ def answer(
         )
     else:
         ans, attempts, bad, reformatted = synthesise(
-            question, context, valid_ids, model, constrain
+            question, context, valid_ids, model, constrain, use_cache
         )
 
     cited = sorted({c for claim in ans.claims for c in claim.citations})
@@ -375,6 +394,7 @@ def run(
     model: str = SYNTH_MODEL,
     constrained: bool = False,
     fresh: bool = False,
+    use_cache: bool = True,
 ) -> None:
     index = route_mod.entity_index()
     if not index:
@@ -382,9 +402,12 @@ def run(
 
     with load.driver() as db, db.session() as session, connect() as conn:
         if question:
-            _print_one(answer(question, session, conn, index, model=model, constrain=constrained))
+            _print_one(answer(
+                question, session, conn, index,
+                model=model, constrain=constrained, use_cache=use_cache,
+            ))
             return
-        _eval(session, conn, index, model, constrained, fresh)
+        _eval(session, conn, index, model, constrained, fresh, use_cache)
 
 
 def _print_one(row: dict[str, Any]) -> None:
@@ -434,6 +457,7 @@ def _eval(
     model: str,
     constrain: bool,
     fresh: bool,
+    use_cache: bool = True,
 ) -> None:
     questions = list(jsonl.read(QUESTIONS))
     if not questions:
@@ -456,7 +480,8 @@ def _eval(
     for q in questions:
         done = prior.get(q["qid"])
         rows.append(done if done else answer(
-            q["question"], session, conn, index, model=model, constrain=constrain, qid=q["qid"]
+            q["question"], session, conn, index,
+            model=model, constrain=constrain, use_cache=use_cache, qid=q["qid"],
         ))
     spend = fireworks.METER.usd - before
     resumed = sum(1 for q in questions if q["qid"] in prior)
@@ -545,12 +570,33 @@ def _report_grounding(questions: list[dict[str, Any]], rows: list[dict[str, Any]
 
 
 def _report_cost(rows: list[dict[str, Any]]) -> None:
-    lat = sorted(r["latency_ms"] for r in rows)
-    paid = [r for r in rows if r["usd"] > 0]
+    """Latency and cost, measured only over questions that actually called the model.
+
+    `chat_json` caches on content, so a rerun answers from disk in single-digit
+    milliseconds at $0.00. Timing those rows reports the cache, not the system — the
+    Phase 1 bakeoff shipped exactly this bug once, benchmarking the incumbent model
+    against its own cached answers (docs/decisions.md). A refusal is excluded for the
+    opposite reason: it is genuinely free and genuinely instant, and averaging it in
+    understates what an answered question costs.
+    """
+    billed = [r for r in rows if r["usd"] > 0]
+    refused_free = [r for r in rows if r["usd"] == 0 and not r["answerable"] and r["attempts"] == 0]
+    cached = len(rows) - len(billed) - len(refused_free)
+
     print("\n" + "-" * 74)
     print("latency and cost per question — the other half of the Phase 5 table")
     print("-" * 74)
+    print(f"  short-circuited refusals    {len(refused_free)}   (no model call, $0.00, ~2 ms)")
+    print(f"  served from cache           {cached}")
+    if not billed:
+        print("\n  Every remaining question was served from cache, so there is no latency or\n"
+              "  cost to report. Rerun with a cleared cache/ to measure them.")
+        return
+    lat = sorted(r["latency_ms"] for r in billed)
+    print(f"  measured on                 {len(billed)} billed questions")
     print(f"  latency p50                 {statistics.median(lat):,.0f} ms")
     print(f"  latency p95                 {lat[int(len(lat) * 0.95) - 1]:,.0f} ms")
-    print(f"  mean $/question             ${statistics.mean(r['usd'] for r in rows):.5f}")
-    print(f"  free (no model call)        {len(rows) - len(paid)}")
+    print(f"  mean $/answered question    ${statistics.mean(r['usd'] for r in billed):.5f}")
+    if cached > len(billed):
+        print("\n  NOTE: most questions were served from cache. The numbers above describe the\n"
+              f"  {len(billed)} that were not, which is a small and non-random sample.")

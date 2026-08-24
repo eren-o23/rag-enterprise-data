@@ -37,6 +37,12 @@ def main() -> None:
         help="route/answer: run this one question instead of the eval set",
     )
     parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="answer: bypass the answer cache so latency and cost are measured rather "
+        "than read back from disk (bakeoff does the same, for the same reason)",
+    )
+    parser.add_argument(
         "--constrained",
         action="store_true",
         help="answer: put the retrieved chunk ids in the schema as an enum, so an "
@@ -106,6 +112,7 @@ def main() -> None:
                 question=args.question,
                 constrained=args.constrained,
                 fresh=args.fresh,
+                use_cache=not args.no_cache,
             )
         except fireworks.BudgetExceeded as exc:
             raise SystemExit(f"\nBUDGET STOP: {exc}") from exc
