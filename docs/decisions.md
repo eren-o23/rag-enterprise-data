@@ -417,3 +417,87 @@ because a gate that only ever passes is precisely the failure this project alrea
 once: Phase 1's resolution eval reported P=1.000 while the pipeline merged ~1,957 pairs
 wrongly. Asserting a gate can fail is cheaper than discovering it never could.
 
+
+---
+
+## Phase 3: the fulltext index built for entity lookup cannot do entity lookup
+
+`cypher/schema.cypher` created a fulltext index on `[e.name, e.aliases]` in Phase 1, with a
+comment saying it exists so Phase 3 can map a name in a question onto a node — "a question
+says 'AMD' and the canonical node is 'Advanced Micro Devices, Inc.'". That was written
+before there was a graph to try it against. Tried against the real one, it fails on the
+exact example it was written for:
+
+```
+'AMD'                     -> AMD Ryzen(TM) PRO (Product) 3.44, AMD Radeon(TM) graphics 3.41
+'AMD' + node.type=Company -> AMD (EMEA) LTD. 1.87, AMD Japan Ltd. 1.87, AMD Design, LLC 1.87
+```
+
+`ADVANCED MICRO DEVICES INC` **does** carry `"AMD"` in its alias list. It also carries ten
+other aliases, and Lucene normalises by field length: a match inside a long `aliases` array
+scores below a match against a node whose entire name is "AMD Japan Ltd.". The right answer
+is not merely ranked low, it is absent from the top five either way. Filtering to
+`type = 'Company'` makes it worse, because it removes the product noise and leaves nothing
+but the small subsidiaries.
+
+The replacement is a dict, not a better query: normalize every name and alias with
+`resolve.normalize` — already written, already tuned, already stripping legal suffixes —
+and look up the question's surface form directly. On the real corpus that is 4,629
+normalized surfaces over 4,496 entities, of which **28 are ambiguous**, and they are almost
+all Location/Company collisions (`intel`, `arm`, `china`, `nasdaq`, `european union`).
+`mention_count`, already stored on every entity, breaks those.
+
+The fulltext index stays, demoted to the fallback for surfaces the model paraphrases into
+something no alias ever said. It also needs its input scrubbed of Lucene syntax characters
+first: `Picosun Japan Co., Ltd.` and any name containing a bracket are a query parse error,
+not a miss, which is a silent difference.
+
+The general shape of this is the same mistake as Phase 1's resolution eval: an artifact
+built ahead of the data it would run on, believed because it looked right. The only reason
+it was caught before the router was written is that the graph was queried first.
+
+## One traversal family with validated predicates, not a template library per query type
+
+The spec says to "keep a template library keyed by query type and let the model fill
+parameters only". Read literally that is roughly 25 hand-written Cypher strings —
+`acquisitions_by`, `auditor_of`, `shared_director` — and every question whose shape is
+missing becomes unanswerable.
+
+The security property the spec is actually protecting is *the model never authors a query*.
+That is satisfied by something much smaller. `load.py` already established the pattern at
+write time: a relationship type cannot be a Cypher bind parameter, so it is interpolated —
+but only after passing through `RelationType(...)`, which raises on anything outside the
+fourteen-member enum. Read time uses the identical rule.
+
+So the library is four shapes (`one_hop`, `two_hop`, `three_hop`, `neighbourhood`) over one
+template, and the model returns a *chain of enum members*:
+
+```
+chain [DIRECTOR_OF, ACQUIRED]  ->  -[r0:DIRECTOR_OF]->()-[r1:ACQUIRED]->()
+```
+
+Thirty lines, every one of the 14 relations reachable, every chain up to length 3
+expressible, and the interpolated substring can only ever be one of fourteen literals.
+`test_traversal_rejects_a_predicate_the_model_invented` asserts that directly, including on
+strings shaped like injection attempts. This also mirrors how `questions.py` mines the eval
+set in the first place — as predicate chains — so the router is answering questions in the
+same vocabulary they were generated in.
+
+The shape field is redundant with the chain length, deliberately: the model declaring both
+means a disagreement between them is detectable. That is layer 2's `chain_shape_mismatch`,
+and it degrades to running both paths rather than guessing which of the two fields to
+believe.
+
+## The router refuses before retrieving, which is a guess, and it is measured as one
+
+Routing to `refuse` is a judgement about what the corpus contains, made *before* looking at
+the corpus. That is strictly weaker than refusing because retrieval came back empty or
+because no citation validated — which is Phase 4's job and the real backstop.
+
+It is in Phase 3 anyway for one reason: `eval/questions.jsonl` already ships 5 hand-written
+out-of-scope questions with empty gold sets, so a `refuse` enum member costs one line and
+turns them from unscorable into a measurement. `h009` — "What is Intel's revenue forecast
+for 2031?" — is the case that decides whether it was worth it. It names a corpus company,
+asks for a figure of a kind filings routinely contain, and is specifically not disclosed.
+A router that refuses `h005` ("capital of France") and accepts `h009` has learned nothing
+except keyword matching.
