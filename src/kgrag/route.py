@@ -520,6 +520,12 @@ def route(
         # and Phase 5 reads this log; without them a routing row records that the graph was
         # consulted and loses its answer, which cannot be reconstructed after the fact.
         "graph_facts": verbalise(steps),
+        # Whether both paths were run regardless of the route. Without this the log mixes
+        # two incomparable kinds of row: eval rows (both paths measured) and answer-time
+        # rows (only the chosen path run, so the other is empty BY DESIGN, not by failure).
+        # Reading an answer-time row as if it were an eval row shows the graph scoring 0 on
+        # questions it answers perfectly. Phase 5 reads this log; it needs to tell them apart.
+        "measure_all": measure_all,
         "n_graph": len(graph_ids),
         "n_vector": len(vector_ids),
         "latency_ms": round((time.perf_counter() - start) * 1000, 1),
