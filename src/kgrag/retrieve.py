@@ -49,7 +49,7 @@ KS = (1, 5, 10, 20)
 MIN_1HOP_RECALL_AT_10 = 0.35
 
 
-def _topk(conn: psycopg.Connection, width: int, vector: list[float], k: int, exact: bool) -> list[str]:
+def topk(conn: psycopg.Connection, width: int, vector: list[float], k: int, exact: bool) -> list[str]:
     with conn.cursor() as cur:
         # Both arms have to be forced, not just one. At 2,743 rows the planner often
         # costs a full scan cheaper than an HNSW probe and picks it even when the index is
@@ -89,7 +89,7 @@ def ann_vs_exact(conn: psycopg.Connection, k: int = 10) -> None:
         exact, exact_ms = [], []
         for v in vectors:
             start = time.perf_counter()
-            exact.append(set(_topk(conn, width, v, k, exact=True)))
+            exact.append(set(topk(conn, width, v, k, exact=True)))
             exact_ms.append((time.perf_counter() - start) * 1000)
         print(f"\nemb_{width}  (exact baseline: {statistics.median(exact_ms):.1f} ms median)")
         print(f"  {'ef_search':>10} {'recall@' + str(k):>10} {'median ms':>11} {'p95 ms':>9}")
@@ -98,7 +98,7 @@ def ann_vs_exact(conn: psycopg.Connection, k: int = 10) -> None:
             hits, ms = [], []
             for v, gold in zip(vectors, exact):
                 start = time.perf_counter()
-                got = set(_topk(conn, width, v, k, exact=False))
+                got = set(topk(conn, width, v, k, exact=False))
                 ms.append((time.perf_counter() - start) * 1000)
                 hits.append(len(got & gold) / len(gold))
             p95 = sorted(ms)[int(len(ms) * 0.95) - 1]
@@ -146,7 +146,7 @@ def recall_at_k(conn: psycopg.Connection) -> None:
         )
         # Exact for every width: 4096 has no index, and comparing an indexed width against
         # an unindexed one would measure the index, not the embedding.
-        results = [_topk(conn, width, v, max(KS), exact=True) for v in vectors]
+        results = [topk(conn, width, v, max(KS), exact=True) for v in vectors]
         per_width[width] = [
             len(set(r[:10]) & set(q["gold_chunk_ids"])) / len(q["gold_chunk_ids"])
             for r, q in zip(results, questions)

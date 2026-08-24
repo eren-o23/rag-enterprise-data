@@ -312,3 +312,142 @@ def test_load_is_idempotent():
         assert set(labels) == {"Entity", "Company"}
         session.run("MATCH (e:Entity) WHERE e.id STARTS WITH 'test_' DETACH DELETE e")
     db.close()
+
+
+# --------------------------------------------------------------------------- route
+
+
+def test_traversal_rejects_a_predicate_the_model_invented():
+    """The security control. A relationship type cannot be a Cypher bind parameter, so it
+    has to be interpolated -- which means the ONLY thing standing between the model and
+    the query string is RelationType(). Anything not in the ontology must raise before it
+    reaches Neo4j, exactly as load.py enforces at write time."""
+    from kgrag.route import arrows
+
+    assert arrows(["ACQUIRED"]) == "-[r0:ACQUIRED]->()"
+    assert arrows(["DIRECTOR_OF", "ACQUIRED"]) == "-[r0:DIRECTOR_OF]->()-[r1:ACQUIRED]->()"
+    assert arrows([]) == "-[r0]-()"  # neighbourhood
+
+    for hostile in ("DROP DATABASE neo4j", "ACQUIRED]->() DETACH DELETE (n", "acquired", ""):
+        with pytest.raises(ValueError):
+            arrows(["ACQUIRED", hostile])
+
+
+def test_chain_length_must_match_shape():
+    """Layer 2. Constrained decoding guarantees every chain member is a real relation; it
+    cannot guarantee there are the right number of them. A two_hop shape carrying one
+    predicate means the traversal the question implied is unknown, so the graph path must
+    not run alone on a guess."""
+    from kgrag.route import Plan, Route, Shape, decide
+
+    good = Plan(route=Route.GRAPH, confidence="high", entities=["AMD"],
+                shape=Shape.TWO_HOP, chain=[RelationType.DIRECTOR_OF, RelationType.ACQUIRED])
+    assert decide(good, ["id_amd"]) == (Route.GRAPH, ["DIRECTOR_OF", "ACQUIRED"], [])
+
+    bad = good.model_copy(update={"chain": [RelationType.DIRECTOR_OF]})
+    route, chain, reasons = decide(bad, ["id_amd"])
+    assert route is Route.BOTH and chain == [] and reasons == ["chain_shape_mismatch"]
+
+    # No anchor node: nothing to traverse from, so the graph path is not merely wrong, it
+    # is impossible.
+    route, _, reasons = decide(good, [])
+    assert route is Route.VECTOR and reasons == ["no_entity_resolved"]
+
+    # The spec's low-confidence fallback: run both and merge.
+    unsure = good.model_copy(update={"confidence": "low"})
+    route, _, reasons = decide(unsure, ["id_amd"])
+    assert route is Route.BOTH and reasons == ["low_confidence"]
+
+
+def test_entity_index_resolves_an_acronym_the_fulltext_index_loses():
+    """The measured Phase 3 finding. Neo4j's fulltext index was created for this lookup and
+    returns AMD Ryzen(TM) PRO, AMD Japan Ltd. and AMD (EMEA) LTD. for "AMD" -- the real node
+    carries "AMD" as one of eleven aliases and Lucene's length normalisation buries it.
+    An exact index over the same aliases does not have that failure mode."""
+    from kgrag.route import entity_index, resolve_entity
+
+    entities = [
+        {"canonical_id": "amd", "type": "Company", "name": "ADVANCED MICRO DEVICES INC",
+         "aliases": ["AMD", "Advanced Micro Devices, Inc.", "Advanced Micro Devices GmbH"],
+         "mention_count": 900},
+        {"canonical_id": "amd_japan", "type": "Company", "name": "AMD Japan Ltd.",
+         "aliases": [], "mention_count": 1},
+        {"canonical_id": "intel_co", "type": "Company", "name": "INTEL CORP",
+         "aliases": ["Intel"], "mention_count": 500},
+        {"canonical_id": "intel_loc", "type": "Location", "name": "Intel",
+         "aliases": [], "mention_count": 3},
+    ]
+    index = entity_index(entities)
+
+    assert resolve_entity("AMD", index) == "amd"
+    assert resolve_entity("amd", index) == "amd"  # normalisation, not case luck
+    assert resolve_entity("Advanced Micro Devices Inc", index) == "amd"  # legal suffix stripped
+    assert resolve_entity("AMD Japan Ltd.", index) == "amd_japan"  # still its own entity
+
+    # 28 normalized surfaces are genuinely ambiguous on the real corpus. mention_count is
+    # the tiebreak, and it is already on every entity.
+    assert resolve_entity("Intel", index) == "intel_co"
+
+    # No exact hit and no session to fall back to is a miss, not a wrong answer.
+    assert resolve_entity("Cyberdyne Systems", index) is None
+
+
+def test_route_end_to_end():
+    """The Phase 3 acceptance test, against the real graph: a 1-hop question about an
+    entity in the corpus must resolve, traverse, and return the chunk that justified the
+    edge. Skips when Neo4j is down, like the load test."""
+    pytest.importorskip("neo4j")
+    from kgrag import load
+    from kgrag.route import entity_index, graph_path, resolve_entity
+
+    try:
+        db = load.driver()
+        db.verify_connectivity()
+    except Exception as exc:  # noqa: BLE001
+        pytest.skip(f"Neo4j not reachable: {exc}")
+
+    index = entity_index()
+    if not index:
+        pytest.skip("data/entities.jsonl not present (fresh clone)")
+
+    with db.session() as session:
+        node_id = resolve_entity("TERADYNE, INC", index, session)
+        assert node_id, "a corpus company must resolve to a node"
+
+        got = graph_path(session, [node_id], ["ACQUIRED"], k=10)
+        assert got, "Teradyne has ACQUIRED edges; the traversal must find their chunks"
+
+        # Every returned id must be a real chunk id, not a node id or a stray property.
+        assert all(len(c) == 16 for c in got)
+        assert len(set(got)) == len(got), "chunk ids must be deduped"
+
+        # Neighbourhood is the aggregation fallback and must reach at least as much as a
+        # single fixed chain does.
+        assert set(got) <= set(graph_path(session, [node_id], [], k=200))
+
+    db.close()
+
+
+def test_routing_log_resume_takes_the_latest_row_per_model(tmp_path, monkeypatch):
+    """The eval resumes from its own log, so a re-measured question must supersede its
+    history rather than replaying it. Getting this backwards would silently serve stale
+    numbers after a ranking change -- the same shape of failure as an eval that cannot
+    fail, which this project has already shipped once."""
+    from kgrag import jsonl, route as route_mod
+
+    log = tmp_path / "routing_log.jsonl"
+    jsonl.append(log, [
+        {"qid": "m000", "model": "small", "route": "vector"},
+        {"qid": "m001", "model": "small", "route": "graph"},
+        {"qid": "m000", "model": "small", "route": "graph"},   # re-measured, must win
+        {"qid": "m000", "model": "big", "route": "refuse"},    # different router
+        {"qid": None, "model": "small", "route": "both"},      # ad-hoc --question run
+    ])
+    monkeypatch.setattr(route_mod, "ROUTING_LOG", log)
+
+    small = route_mod._prior("small")
+    assert small["m000"]["route"] == "graph", "the later row must win"
+    assert small["m001"]["route"] == "graph"
+    assert None not in small, "ad-hoc runs carry no qid and must not resume anything"
+    assert route_mod._prior("big")["m000"]["route"] == "refuse", "models must not cross"
+    assert route_mod._prior("unrun") == {}

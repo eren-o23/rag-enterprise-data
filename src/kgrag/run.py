@@ -17,7 +17,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="kgrag", description=__doc__)
     parser.add_argument(
         "stage",
-        choices=(*STAGES, "all", "verify", "models", "candidates", "mine-pairs", "mine-questions", "recall", "sweep", "bakeoff"),
+        choices=(*STAGES, "all", "verify", "models", "candidates", "mine-pairs", "mine-questions", "recall", "route", "sweep", "bakeoff"),
     )
     parser.add_argument(
         "--budget",
@@ -30,6 +30,21 @@ def main() -> None:
     )
     parser.add_argument(
         "--yes", action="store_true", help="skip the cost-projection confirmation prompt"
+    )
+    parser.add_argument(
+        "--question",
+        default=None,
+        help="route: route this one question instead of running the eval set",
+    )
+    parser.add_argument(
+        "--router-model",
+        default=None,
+        help="route: override the router model (default: gpt-oss-20b)",
+    )
+    parser.add_argument(
+        "--fresh",
+        action="store_true",
+        help="route: re-decide every question instead of resuming from the routing log",
     )
     parser.add_argument(
         "--only",
@@ -67,6 +82,15 @@ def main() -> None:
         from . import retrieve
 
         retrieve.run()
+        return
+    if args.stage == "route":
+        from . import route as route_mod
+
+        route_mod.run(
+            question=args.question,
+            model=args.router_model or route_mod.ROUTER_MODEL,
+            fresh=args.fresh,
+        )
         return
     if args.stage == "sweep":
         from . import resolve

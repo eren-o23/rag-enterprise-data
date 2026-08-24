@@ -24,6 +24,9 @@ OVERRIDES = DATA / "overrides.jsonl"
 #: Aliases the filings declare about themselves, mined by `kgrag mine-pairs`. Kept apart
 #: from OVERRIDES so the hand-decided count stays a quality signal (see docs/decisions.md).
 ALIASES = DATA / "aliases.jsonl"
+#: Append-only record of every routing decision. Phase 5 reads this and it cannot be
+#: reconstructed after the fact, so `kgrag route` writes it from the first run.
+ROUTING_LOG = DATA / "routing_log.jsonl"
 
 
 def require(name: str) -> str:
