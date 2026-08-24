@@ -14,7 +14,7 @@ related entities — the class of question where plain vector RAG quietly fails.
 | 1 | Entity + relationship extraction into Neo4j | **complete** — 4,496 entities, 4,685 edges, gate passing |
 | 2 | pgvector index over the same chunks | **complete** — 2,743 chunks × 3 widths, recall measured by hop count |
 | 3 | Question router (graph vs. vector) | **complete** — 91% routing accuracy, multi-hop recall 2.5x the vector baseline |
-| 4 | Grounded answer synthesis with validated citations | not started |
+| 4 | Grounded answer synthesis with validated citations | **complete** — 0 invented citations, both enforcement arms measured |
 | 5 | Benchmark vs. vector-only baseline | not started |
 
 ## Phase 1 results
@@ -248,6 +248,111 @@ name thousands of such entities. Correcting that one paragraph took 1-hop accura
 - Router cost is **$0.021 per full 57-question sweep** on `gpt-oss-120b`, content-cached, so
   reruns are free.
 
+## Phase 4 results
+
+Both retrieval paths merge into one answer, and **every published citation resolves to a
+chunk that was actually retrieved** — 288 citations across two full sweeps, zero invented.
+
+A citation is a chunk id: the same 16-character key minted in `chunk.py`, carried on every
+Neo4j edge and used as the pgvector primary key. Validating one is a set-membership test
+with no mapping to get wrong, and it is what lets a graph-derived fact and a retrieved
+passage cite in the same currency.
+
+### Does constrained decoding beat reject-and-regenerate?
+
+The spec asks to reject invalid citations and regenerate. `ontology.py`'s design says to put
+the retrieved ids in the schema as an `enum` so an invalid one is unreachable. Both were
+built and run over the same 57 questions.
+
+| | free (validate + regenerate) | constrained (enum) |
+|---|---|---|
+| answers produced | 45/57 | 45/57 |
+| claims / citations | 56 / 133 | 84 / 155 |
+| **invented ids published** | **0** | **0** |
+| citations needing a delimiter strip | 598 | 0 |
+| answers needing a repair round | 2 | 0 |
+| out-of-scope refused | 5/5 | 5/5 |
+| answerable wrongly refused | 7/52 | 7/52 |
+| latency p50 / p95 | 6,545 / 11,213 ms | 6,544 / 10,073 ms |
+| $ per answered question | $0.00124 | $0.00116 |
+
+**The constraint is free and deletes the repair loop.** Same answer rate, same refusals,
+latency inside noise, marginally cheaper because it never pays for a regeneration. The free
+arm is kept because it is the only one that can *measure* invention; the constrained arm is
+the API default.
+
+### Graph paths become sentences before they reach the prompt
+
+Raw triples generate awkward text, so each edge is rendered through one phrase per relation
+in `ontology.RELATION_PHRASE`, subject-first, with its chunk ids attached:
+
+```
+GRAPH FACTS (derived from the knowledge graph)
+[2f5b29f93fecbae1] ADVANCED MICRO DEVICES INC is exposed to the risk of export controls...
+[234156833fa87f30] TSMC supplies ADVANCED MICRO DEVICES INC
+```
+
+That second line is the one that matters. A neighbourhood walk is undirected, so half its
+edges arrive against their stored direction — direction is read off the relationship
+(`startNode`/`endNode`), never off path order. Read it off the path and the system publishes
+"AMD supplies TSMC": confident, well-cited, and exactly backwards, with no error anywhere.
+
+### Refusal moved from a guess to a fact
+
+Phase 3's `refuse` is a judgement about corpus scope made *before* looking at the corpus.
+Grounding is the real backstop, and it costs nothing: a refused question short-circuits
+before any model call at **$0.00000 and ~2 ms**. All 5 out-of-scope questions are refused,
+and 7 of 52 answerable ones are refused for stated reasons ("the provided context does not
+contain...").
+
+`h007` — "Who is the chief executive of OpenAI?" — is exactly this case, and the reason its
+Phase 3 label was left alone. OpenAI is in the graph; the fact asked for is in no filing.
+The system now reaches retrieval and refuses for the true reason instead of guessing.
+
+### Grounding, and what it is not
+
+Share of cited chunks that appear in the question's gold set — 1-hop **0.662**, 2-hop
+**0.567**, 3-hop **0.213** (free arm). These are **floors**. Gold sets are the chunks whose
+text justified a graph edge, a lower bound rather than an exhaustive answer key, so a cited
+chunk outside the set is not necessarily wrong.
+
+Whether the answers are *correct* is deliberately not measured here: that needs a judge, and
+a judge is an instrument that has to be validated before it is trusted. Phase 5.
+
+### What the measurements caught
+
+- **Six answers were abandoned for citing their own context correctly.** The context renders
+  20 graph facts carrying up to 3 chunk ids each; the validator was checking against the
+  route's top-10 `graph_ids`. Answers produced 39 → 45, abandonments 6 → 0, wrong refusals
+  13 → 7. The citable set now comes back from the function that prints it.
+- **The cost report was timing the cache** — p50 of 7 ms, because 126 of 127 calls came off
+  disk. Same bug as the Phase 1 bakeoff. Latency is now measured only over billed questions.
+- **~600 "invented" citations were brackets.** The model copies `[c8608131…]` verbatim,
+  delimiter included, for ids that really were retrieved. Counting those as invention would
+  have made the arm comparison measure formatting rather than grounding.
+- **The router's own example question has no path in the graph.** Sundström has eight
+  `DIRECTOR_OF` edges and none of those companies has an `ACQUIRED` edge — but he is
+  `OFFICER_OF` NXP, which acquired Freescale, and the passages say so. A graph route that
+  traverses to nothing now falls back to vector, logged and counted.
+
+### The endpoint
+
+```bash
+uv run uvicorn kgrag.api:app
+curl -s localhost:8000/ask -H 'content-type: application/json' \
+     -d '{"question":"Who is INTEL CORP'"'"'s independent auditor?"}'
+```
+
+```json
+{"answerable": true,
+ "answer": "Intel Corp's independent auditor is Ernst & Young LLP.",
+ "route": "graph",
+ "citations": ["c8608131724ee274", "ecec386ead8c9bcc"]}
+```
+
+Both citations are m001's full gold set. The Neo4j driver and the 4,629-surface entity index
+are built once at startup; the psycopg connection is per-request.
+
 ## Stack
 
 Python 3.12 · Neo4j · pgvector · Fireworks (`gpt-oss-120b`, `qwen3-embedding-8b`) · FastAPI
@@ -271,6 +376,10 @@ uv run kgrag resolve        # collapse surface forms into canonical entities
 uv run kgrag load           # MERGE into Neo4j
 uv run kgrag embed          # same chunks into pgvector; --yes to commit the spend
 uv run kgrag verify         # the gate: graph, vector store, and the join between them
+
+uv run kgrag route          # route each question, measure the decision
+uv run kgrag answer         # grounded answers; --constrained, --no-cache, --fresh
+uv run uvicorn kgrag.api:app
 ```
 
 ### Backing up the vector store

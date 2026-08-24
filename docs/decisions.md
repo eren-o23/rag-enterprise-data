@@ -601,3 +601,131 @@ prompt in its cache key so an edit invalidates exactly the right entries; the re
 carries the same idea as `router_sha`, a fingerprint of the prompt and schema that every
 logged row stores and `_prior` requires to match. `--fresh` remains for changes it cannot
 see, such as traversal or ranking code.
+
+## Phase 4: citations are chunk ids, because that makes validation set membership
+
+The spec asks for "a citation per claim" and for every citation to "resolve to a chunk id
+that was actually retrieved". The tempting design is footnote numbers, or indices into the
+passage list, with a mapping back to chunks. Every one of those adds a translation step
+between what the model writes and what gets checked, and a citation system is only worth
+having if the check cannot be fooled.
+
+So the citation token IS the chunk id — the same 16-character key minted in `chunk.py`,
+carried in every Neo4j edge's `chunk_ids`, and used as the primary key of the pgvector
+`chunks` table since Phase 2. Validating a citation is then one set-membership test against
+what retrieval returned, with no mapping to get wrong, and a graph-derived fact and a
+retrieved passage cite in the same currency — which is what lets one answer mix them at
+all.
+
+## Two citation-enforcement arms, because "validated citations" is a claim
+
+`ontology.py` rests on the idea that constrained decoding makes an off-vocabulary value
+unreachable rather than merely rejected. Applied to citations, that says: put the retrieved
+chunk ids in the JSON schema as an `enum` and an invented citation cannot be generated.
+
+But the spec explicitly asks to "reject and regenerate", and a system where invention is
+impossible has no invented-citation rate to report — it cannot answer the question of what
+the constraint is worth. So both were built and measured over the same 57 questions:
+
+| | free (validate + regenerate) | constrained (enum) |
+|---|---|---|
+| answers produced | 45/57 | 45/57 |
+| claims / citations | 56 / 133 | 84 / 155 |
+| citations needing a delimiter strip | 598 | 0 |
+| answers needing a repair round | 2 | 0 |
+| abandoned after repairs | 0 | 0 |
+| invented ids in published answers | 0 | 0 |
+| out-of-scope refused | 5/5 | 5/5 |
+| answerable wrongly refused | 7/52 | 7/52 |
+| latency p50 / p95 | 6,545 / 11,213 ms | 6,544 / 10,073 ms |
+| $ per answered question | $0.00124 | $0.00116 |
+
+The constraint costs nothing measurable — same answer rate, same refusals, same latency
+inside noise, marginally cheaper because it never pays for a repair round — and it deletes
+the entire repair mechanism. That is the result. The free arm is kept because it is the
+only arm that can *measure* invention; the constrained arm is the default for the API.
+
+Both arms publish zero invented citations, which is the claim the spec actually makes. They
+arrive there differently: one by construction, one by catching two answers and regenerating
+them.
+
+## A citation copied with its brackets is a delimiter slip, not an invented source
+
+The context prints ids as `[c8608131724ee274]`, and gpt-oss-120b cites `[c8608131724ee274]`
+— brackets included — about 600 times over a 57-question sweep, for ids that really were
+retrieved. Three repair rounds do not talk it out of the habit.
+
+Treating that as invention is wrong twice. It overstates the invented rate by roughly two
+orders of magnitude, and it makes the free-vs-constrained comparison measure formatting
+instead of grounding: the constrained arm cannot emit a bracket at all, so it would "win"
+on a typographic technicality rather than on whether the model made up a source. The strip
+is deliberately narrow — surrounding brackets and whitespace only — so a fabricated or
+truncated id still fails, and the count is reported rather than hidden.
+
+## The citable set has to be exactly what the context printed
+
+Six answers were abandoned as `citation_unrecoverable` for citing their own context
+correctly.
+
+`build_context` renders up to 20 graph facts, each showing up to three of the chunk ids
+that justified its edge — as many as 60 ids. The caller was computing the citable set from
+the route's `graph_ids`, which `chunk_ids_of` caps at k=10. So the model read an id off the
+page, cited it, and the validator called it invented. The measurement was wrong, not the
+model: fixing it moved answers produced from 39 to 45, abandonments from 6 to 0, and
+answerable questions wrongly refused from 13 to 7.
+
+The set now comes back from `build_context` itself, alongside the text. What is printed and
+what is citable are produced by one function and cannot drift.
+
+## A repair prompt must differ from the prompt it repairs
+
+`chat_json` caches on `(model, PROMPT_VERSION, system, user, schema)`. A regeneration that
+resends a byte-identical prompt is therefore served the *same invalid answer* off disk,
+forever, at $0.00 — indistinguishable in the logs from a model that refuses to correct
+itself. The repair message names the rejected ids, which changes the key and makes the
+retry an actual retry.
+
+This is the third appearance of one bug in this project: the Phase 1 bakeoff measured cache
+hits for the incumbent model, and the Phase 3 resume replayed decisions made by a prompt
+that no longer existed. Content-addressed caching is the right design and it fails the same
+way every time — when identity of *inputs* is mistaken for identity of *intent*.
+
+## The cost report was timing the cache, again
+
+A rerun of the answer sweep reported a p50 latency of 7 ms and $0.00003 per question,
+because 126 of 127 calls came off disk. Those numbers describe the filesystem.
+
+Latency and cost are now measured only over questions that actually billed, short-circuited
+refusals are excluded and counted separately (genuinely free and genuinely instant, but
+averaging them in understates what an answer costs), and the report says out loud when most
+of the sample was cached. `--no-cache` forces a real measurement, exactly as `kgrag bakeoff`
+already does and for the same reason.
+
+## A graph route whose traversal finds nothing falls back to vector, and says so
+
+The router's own prompt uses "Which company was acquired by a company that Karl-Henrik
+Sundstrom is a director of?" as its two-hop example. There is no such path in this graph:
+Sundström has eight `DIRECTOR_OF` edges and none of those companies carries an `ACQUIRED`
+edge. He is, however, `OFFICER_OF` NXP, and the filings state that NXP acquired Freescale —
+so the passages answer a question the graph cannot.
+
+Phase 3 correctly does not run the path the router rejected; that is the cost routing
+exists to avoid. But at answer time an empty graph result is not a decision, it is an empty
+context, and one cached embedding call is cheaper than a refusal. The fallback is logged as
+`graph_empty_fell_back_to_vector` and counted in the report — a silent version would make
+the Phase 3 routing numbers describe something other than what production does. It fired on
+0 of the 57 eval questions and turned that example question from an abandoned answer into a
+correct one.
+
+## Answer correctness is not graded in Phase 4
+
+Phase 4 reports citation integrity, refusal behaviour, groundedness against the gold chunk
+sets, latency and cost. It does not report whether the answers are *right*, because that
+needs a judge, and a judge is a measurement instrument that itself has to be validated.
+
+The groundedness numbers (1-hop 0.662, 2-hop 0.567, 3-hop 0.213 in the free arm) are the
+share of cited chunks that appear in a question's gold set, and they are **floors**: gold
+sets are the chunks whose text justified a graph edge, a lower bound rather than an
+exhaustive answer key, so a cited chunk outside the set is not necessarily wrong. The 3-hop
+figure in particular says more about gold-set sparsity at three hops than about the answers.
+The accuracy-by-hop-count table the README opens with is Phase 5's job.

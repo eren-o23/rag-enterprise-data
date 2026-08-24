@@ -8,14 +8,34 @@ _Last updated: 2026-08-24_
 
 Portfolio project 1 of an AI/ML engineering job-search portfolio: a hybrid knowledge-graph +
 vector RAG system over SEC filings, built entirely on open-weight models (Fireworks-hosted,
-$55 budget) instead of the Claude API the original brief specced. **Phases 1, 2 and 3 of 5 are complete;
-Phase 4 ("Merge both sources into one grounded answer") is the next work.** See
+$55 budget) instead of the Claude API the original brief specced. **Phases 1-4 of 5 are complete;
+Phase 5 ("Benchmark against plain vector RAG and publish the delta") is the next work.** See
 [rag-enterprise-data.md](rag-enterprise-data.md) (gitignored, local-only — the original spec)
 and [docs/decisions.md](docs/decisions.md) for the full design-decision log.
 
 ---
 
 ## Current State
+
+**Phase 4 is complete and measured.** `kgrag answer` merges both retrieval paths into one
+grounded answer. **288 published citations across two full sweeps, zero invented.** Both
+enforcement arms were built and compared over the same 57 questions:
+
+| | free (validate + regenerate) | constrained (enum) |
+|---|---|---|
+| answers produced | 45/57 | 45/57 |
+| claims / citations | 56 / 133 | 84 / 155 |
+| invented ids published | 0 | 0 |
+| citations needing a delimiter strip | 598 | 0 |
+| answers needing a repair round | 2 | 0 |
+| out-of-scope refused | 5/5 | 5/5 |
+| answerable wrongly refused | 7/52 | 7/52 |
+| latency p50 / p95 | 6,545 / 11,213 ms | 6,544 / 10,073 ms |
+| $ per answered question | $0.00124 | $0.00116 |
+
+The constraint costs nothing measurable and deletes the repair loop entirely. `POST /ask`
+(`uv run uvicorn kgrag.api:app`) answers with validated citations — the spec's "Done when".
+Phase 4 spend: **~$0.23**. See README "Phase 4 results".
 
 **Phase 3 is complete and measured.** `kgrag route` routes each question to the graph
 path, the vector path, both, or a refusal. **Routing accuracy 54/57 (94.7%)**; routed
@@ -59,11 +79,10 @@ both non-empty. `uv run pytest tests/` — 21 tests (one skips when Neo4j is dow
 README's "Phase 1 results" section has the full numbers; `docs/decisions.md` has the
 reasoning.
 
-**Docker is currently RUNNING** (both containers healthy).
-
-**Docker was previously STOPPED.** It was shut down to free memory for the local model in the
-bakeoff — this machine has 8 GB and swap was near capacity. `docker compose up -d` restores
-it; the Neo4j volume is intact, so the graph is still there and does not need reloading.
+**Docker is currently RUNNING** (both containers healthy). The daemon itself was down at the
+start of this session and needed `open -a Docker` before `docker compose up -d` — the volumes
+were intact, so nothing needed reloading. If a local model is ever run again, stop Docker
+first: this machine has 8 GB and swap was near capacity during the Phase 1 bakeoff.
 
 ---
 
@@ -100,7 +119,7 @@ it; the Neo4j volume is intact, so the graph is still there and does not need re
 - **The gold set is ~3x under-labeled** (103 mentions where the model finds 305), so it
   supports recall comparisons only. Do not quote precision or F1 from `kgrag bakeoff`.
 
-### Phase 4 specifics — read before writing any synthesis code
+### Phase 4 specifics — retained
 
 - **`kgrag route` is the input to Phase 4.** `route.route()` returns the log row, which
   keeps `graph_ids`, `vector_ids` and the merged `chunk_ids` as separate lists — the
@@ -125,6 +144,33 @@ it; the Neo4j volume is intact, so the graph is still there and does not need re
   fulltext loses "AMD" to `AMD Japan Ltd.` (see decisions.md).
 - **`data/routing_log.jsonl` is append-only and gitignored**, but it is regenerable for
   $0.00 — router calls are content-cached. Phase 5 reads it.
+
+### Phase 5 specifics — read before writing any benchmark code
+
+- **Citations are chunk ids, and the citable set comes from `build_context`, not the
+  caller.** It returns `(context, citable)` together precisely so the two cannot drift.
+  Computing it anywhere else already cost six abandoned answers: the context renders 20
+  facts × up to 3 ids, the caller was checking against the route's top-10 `graph_ids`, and
+  the model got blamed for citing what was in front of it.
+- **`--no-cache` exists because the cost report was timing the cache.** A resumed or cached
+  answer sweep reports a p50 of ~7 ms and $0.00003/question. `_report_cost` now measures
+  only billed rows and says so when the sample is mostly cache, but a Phase 5 latency claim
+  must be made with `--no-cache`, the way `kgrag bakeoff` already does.
+- **A repair prompt must differ from the prompt it repairs.** `chat_json` caches on prompt
+  content, so a byte-identical retry is served the same invalid answer forever at $0.00.
+  `_user()` appends the rejected ids for exactly this reason. Third appearance of this bug
+  in the project — see decisions.md.
+- **A bracketed citation is a delimiter slip, not invention.** `_clean` strips surrounding
+  brackets and whitespace only. Do not widen it: a truncated or fabricated id must still
+  fail. It fires ~600 times per free-arm sweep and 0 times in the constrained arm.
+- **`synth_sha` cannot see traversal, ranking or validation changes** — same limitation as
+  `router_sha`. Use `kgrag answer --fresh` after changing any of them.
+- **`data/answer_log.jsonl` is append-only and gitignored**, regenerable for ~$0.13.
+  `graph_facts` is now on every routing-log row too, so Phase 5 can read what the graph
+  actually said, not just where it pointed.
+- **Answer correctness is ungraded on purpose.** The grounding numbers are floors against
+  gold chunk sets, not accuracy. Phase 5's judge is a measurement instrument and needs
+  validating before its numbers are quoted.
 
 ### Phase 3 specifics — retained
 
@@ -196,53 +242,53 @@ it; the Neo4j volume is intact, so the graph is still there and does not need re
 
 ## Next Step
 
-**Phase 4: merge both sources into one grounded answer.** `kgrag route` already returns
-ranked `chunk_id`s from whichever path(s) it chose, which is the input Phase 4 needs.
+**Phase 5: benchmark against plain vector RAG and publish the delta.** Everything it reads
+already exists: `data/routing_log.jsonl` (57 rows with `graph_facts`), `data/answer_log.jsonl`
+(both arms), and `eval/questions.jsonl` stratified by hop count.
 
-1. Convert graph paths into readable statements before they reach the prompt. Raw triples
-   generate awkward text. The traversal already returns the relationship chain, so the
-   verbaliser has the predicate and both endpoint names.
-2. Deduplicate across the two sets, then assemble context with **explicit labels** keeping
-   graph-derived facts separate from retrieved passages.
-3. Require a citation per claim and validate that every citation resolves to a chunk_id
-   that was actually retrieved. Reject and regenerate when it does not. This is also the
-   real backstop for out-of-scope questions — the router's `refuse` is a guess made before
-   looking at the corpus (see decisions.md).
-4. `route.route()` returns the full log row including `graph_ids`, `vector_ids` and
-   `chunk_ids` separately, so the labelling in step 2 needs no extra bookkeeping.
+1. Build the answer-correctness judge. This is the one new instrument, and it has to be
+   validated before its numbers are quoted — the project has twice shipped an eval that
+   could not fail (Phase 1 resolution graded against its own answer key; Phase 3 resuming
+   decisions from a prompt that no longer existed).
+2. Run the vector-only arm end to end: same synthesis, same citation contract, passages
+   only. The graph arm is `kgrag answer` as it stands.
+3. Report accuracy by hop count. The expected shape is parity at 1-hop and a widening gap
+   as hops increase — the R@10 curve already shows it (1-hop .586 → .792, 2-hop .288 →
+   .775), so the question is whether it survives synthesis.
+4. Report latency and cost per query for both, plus one-time ingestion cost ($1.41 extract
+   + $0.57 embed). Measure with `--no-cache` or the numbers describe the filesystem.
+5. Put the table at the top of the README, above the architecture diagram.
 
-**One decision waiting on you:** `h007` ("Who is the chief executive of OpenAI?") is
-gold-labelled out-of-scope because OpenAI is "outside the 24-filer corpus". OpenAI *is* in
-the graph — a Company node, 5 mentions, `PARTNERS_WITH` NVIDIA, two `DIRECTOR_OF` edges.
-The entity is present; the fact asked for is not. The router now routes it to `vector`,
-which is scored as the only out-of-scope error (0.800). The row was **not** edited — the
-10 hand-written rows are not regenerable, and silently relabelling an eval row that
-disagrees with the system is how an eval stops being able to fail. Either relabel it
-deliberately or leave the 0.800 standing.
+**h007 was decided: left alone.** The 0.800 stands. Phase 4 vindicates it — the system now
+reaches retrieval and refuses for the true reason (the entity is in the corpus, the fact is
+not) rather than guessing before it looks. Written up in README Phase 4 and decisions.md.
 
 Optional cleanup, none of it blocking:
 
+- 7 of 52 answerable questions are refused at synthesis (`m008`, `m025`, `m026`, `m032`,
+  `m035`, `m045`, `h000`). Some are honest — the retrieved context genuinely lacks the fact
+  — but they have not been read one by one.
 - The two remaining genuine routing errors are multi-hop questions routed to vector
   (`h001` aggregation, `m032` 2-hop).
 - The 45 remaining `self_loop_after_resolution` edges (unchanged since Phase 1). Fixing
   them means not stripping national legal forms (`GmbH`, `AG`, `Oy`) in `normalize()`.
-  Entity ids are deliberately NOT frozen, so this costs a `resolve` + `embed` rerun that
-  refreshes `entity_ids` in Postgres for **$0.00** and re-embeds nothing.
+  Costs a `resolve` + `embed` rerun that refreshes `entity_ids` for **$0.00**.
 - Exhaustively re-label the 20 extraction gold chunks so the bakeoff can report precision.
 - ~39 orphan Exhibit 21 subsidiary shells with no `SUBSIDIARY_OF` edge.
 
 ## Open Questions / Blockers
 
-_None blocking._ Fireworks is working with enormous budget headroom ($1.41 of $55), and
-Phase 1 is complete and committed. Two things to be aware of rather than solve:
+_None blocking._ Fireworks is working with enormous budget headroom (**~$2.23 of $55** spent
+across all four phases: $1.41 extract, $0.57 embed, $0.02 routing, ~$0.23 synthesis), and
+Phases 1-4 are complete and committed. Two things to be aware of rather than solve:
 
 - **This machine is memory-constrained**: 8 GB, and swap was near capacity during the bakeoff
   (that is what crashed it earlier in the session, running a larger local model). Neo4j and
   Postgres running together plus an index build is the heaviest thing Phase 2 will do. Embedding
   itself is network-bound and cheap. If a local model is ever needed again, stop Docker first.
-- **One decision to make early:** whether entity ids are frozen before they are written into
-  Postgres as metadata (see Key Invariants). Deferring is fine — it costs a metadata `UPDATE`,
-  not a re-embed — but decide deliberately rather than discovering it later.
+- **Entity ids are still deliberately not frozen**, and that is now a settled decision rather
+  than an open one: `kgrag embed` upserts metadata separately from the vector UPDATEs, so a
+  resolution change refreshes `entity_ids` for $0.00 and re-embeds nothing.
 
 ---
 
@@ -292,3 +338,20 @@ _Append-only. One line per session — never overwrite previous entries._
   longer existed — an edit + rerun reported identical numbers at $0.00000 spend — now
   guarded by `router_sha`. Left `h007` mislabelled rather than edit a non-regenerable eval
   row; it is the only out-of-scope error and is written up for a decision.
+- 2026-08-24: Closed Phase 4. Built `kgrag answer`: graph paths verbalised subject-first off
+  `startNode`/`endNode` (path order is meaningless on an undirected neighbourhood walk and
+  would publish "AMD supplies TSMC" backwards), both sources merged under explicit labels,
+  and a citation contract where the token IS the chunk id so validation is set membership.
+  Built both enforcement arms rather than picking one: constrained decoding costs nothing
+  measurable and deletes the repair loop, which is the result. 288 citations published, zero
+  invented. Added `POST /ask`. Three bugs found by the measurements disagreeing with
+  themselves: the citable set was the route's top-10 `graph_ids` while the context printed
+  up to 60 ids, so six answers were abandoned for citing their own context correctly (39 →
+  45 answers, 13 → 7 wrong refusals); the cost report timed the cache and reported a 7 ms
+  p50, the same bug as the Phase 1 bakeoff; and ~600 "invented" citations were the model
+  copying `[brackets]` around ids that really were retrieved, which if counted as invention
+  would have made the arm comparison measure formatting rather than grounding. Also found
+  the router's own two-hop example has no path in the graph — Sundström is `OFFICER_OF` NXP,
+  not a director of an acquirer — so a graph route that traverses to nothing now falls back
+  to vector, logged and counted. Confirmed the traversal refactor is behaviour-preserving:
+  `kgrag route --fresh` reproduces 54/57 and every R@10 cell at $0.00000.

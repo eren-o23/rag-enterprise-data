@@ -613,3 +613,31 @@ def test_a_refused_question_never_reaches_the_model(monkeypatch):
     assert row["answerable"] is False
     assert row["refusal_reason"] == "router_refused"
     assert row["attempts"] == 0 and row["usd"] == 0.0
+
+
+def test_one_arm_does_not_evict_the_other_arms_resumable_rows(tmp_path, monkeypatch):
+    """Both citation arms append to one answer log. Treating the other arm's rows as a
+    superseded prompt pops them, so running free then constrained leaves each arm with
+    nothing to resume -- "0 resumed" for 57 questions that are all sitting on disk. A
+    resume that silently never resumes is worse than no resume: it looks like it worked."""
+    from kgrag import answer as answer_mod
+    from kgrag import jsonl
+
+    log = tmp_path / "answer_log.jsonl"
+    monkeypatch.setattr(answer_mod, "ANSWER_LOG", log)
+    model = answer_mod.SYNTH_MODEL
+
+    def row(qid, constrain, sha=None):
+        return {"qid": qid, "model": model, "arm": "constrained" if constrain else "free",
+                "synth_sha": sha or answer_mod.synth_sha(constrain), "refusal_reason": ""}
+
+    # free arm answered first, then the constrained arm ran the same questions.
+    jsonl.append(log, [row("m000", False), row("m001", False)])
+    jsonl.append(log, [row("m000", True), row("m001", True)])
+
+    assert set(answer_mod._prior(model, constrain=False)) == {"m000", "m001"}
+    assert set(answer_mod._prior(model, constrain=True)) == {"m000", "m001"}
+
+    # A stale prompt within the SAME arm still supersedes: that row is not resumable.
+    jsonl.append(log, [row("m000", False, sha="stale0000000")])
+    assert set(answer_mod._prior(model, constrain=False)) == {"m001"}

@@ -437,9 +437,18 @@ def _prior(model: str, constrain: bool) -> dict[str, dict[str, Any]]:
     """
     prior: dict[str, dict[str, Any]] = {}
     sha = synth_sha(constrain)
+    arm = "constrained" if constrain else "free"
     for row in jsonl.read(ANSWER_LOG):
         if not row.get("qid") or row.get("model") != model:
             continue
+        # Both arms append to one log, so the other arm's rows are simply not evidence
+        # about this one -- skipped, never popped. Popping them is a resume that silently
+        # never resumes: running free then constrained left each arm's rows evicted by the
+        # other's, reporting "0 resumed" for 57 questions that were all on disk.
+        if row.get("arm") != arm:
+            continue
+        # A row written by a prompt or schema that no longer exists IS about this arm, and
+        # is superseded rather than irrelevant -- so this one pops.
         if row.get("synth_sha") != sha:
             prior.pop(row["qid"], None)
             continue
