@@ -1,4 +1,4 @@
-"""`kgrag verify` — the gate Phase 1 has to clear before Phase 2 starts.
+"""`kgrag verify` — the gate both built phases have to clear.
 
 Every check here is one that fails loudly on a graph that looks fine in the browser:
 a relation type nothing ever populated, a corpus of disconnected islands, or a
@@ -92,7 +92,7 @@ def run() -> None:
         for f in failures:
             print(f"FAIL  {f}")
         raise SystemExit(1)
-    print("PASS  Phase 1 gate clear")
+    print("PASS  Phase 1 + 2 gate clear")
 
 
 #: The production embedding column, chosen by measuring 1024 against 2000 and 4096 with
