@@ -155,6 +155,14 @@ an answer, and the corpus contains far more than it. So:
    the five contradicts the reference. Marking it down measures the reference's sparsity.
 3. Mark incorrect only when the answer contradicts the reference, or when it answers a
    different question than the one asked -- however fluent and well-sourced it looks.
+3b. ABSENCE IS NOT CONTRADICTION. The reference never says "only". A reference naming one
+   regulator does not deny that others exist; a bio listing three boards does not deny a
+   fourth. An answer that gives the fact asked for and adds items the reference is silent
+   about is CORRECT. Contradiction means the reference states something incompatible with
+   the answer -- a different jurisdiction of incorporation for the same entity, a different
+   count, a different auditor -- not merely something it does not mention.
+3c. An answer that gives some of the items asked for and omits others, contradicting
+   nothing, is PARTIAL, not incorrect.
 4. Different wording and different surface forms are the same answer. "Ernst & Young (EY)"
    is "Ernst & Young LLP"; a subsidiary named in full is the same entity as its short name.
 5. When the reference gives a KNOWN CORRECT ANSWER, an answer that states it is correct.
