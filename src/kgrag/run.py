@@ -10,7 +10,7 @@ import argparse
 
 from . import fireworks
 
-STAGES = ("fetch", "chunk", "extract", "resolve", "load")
+STAGES = ("fetch", "chunk", "extract", "resolve", "load", "embed")
 
 
 def main() -> None:
@@ -94,6 +94,10 @@ def main() -> None:
                     from . import load
 
                     load.run()
+                case "embed":
+                    from . import embed
+
+                    embed.run(assume_yes=args.yes, limit=args.limit)
     except fireworks.BudgetExceeded as exc:
         raise SystemExit(f"\nBUDGET STOP: {exc}") from exc
     finally:

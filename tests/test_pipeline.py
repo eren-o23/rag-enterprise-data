@@ -120,6 +120,25 @@ def test_embedding_cache_key_separates_dimensions_without_invalidating_the_old_c
     assert len(keys) == 4
 
 
+def test_chunk_to_entity_inversion_is_complete():
+    """resolve.py writes entity -> mention_chunks; pgvector rows need the reverse. Nothing
+    stores it, so embed.py inverts in memory -- and a dropped chunk there means a passage
+    that silently cannot be filtered to the entity it names."""
+    from kgrag.embed import chunk_entities
+
+    entities = [
+        {"canonical_id": "e_amd", "mention_chunks": ["c1", "c2"]},
+        {"canonical_id": "e_nvda", "mention_chunks": ["c2", "c3"]},
+        {"canonical_id": "e_tsmc", "mention_chunks": ["c1"]},
+    ]
+    index = chunk_entities(entities)
+
+    assert set(index) == {"c1", "c2", "c3"}
+    assert index["c1"] == ["e_amd", "e_tsmc"]  # sorted, so the column is stable across runs
+    assert index["c2"] == ["e_amd", "e_nvda"]
+    assert sum(len(v) for v in index.values()) == sum(len(e["mention_chunks"]) for e in entities)
+
+
 # --------------------------------------------------------------------------- chunking
 
 
