@@ -498,14 +498,26 @@ def _prior(model: str) -> dict[str, dict[str, Any]]:
 
     The routing log already holds everything a row needs, so replay is exact rather than
     approximate. Later rows win, so a re-measured question supersedes its own history.
-    `--fresh` ignores this entirely, which is what to use after changing ranking or
-    traversal code -- otherwise stale rows would quietly survive into the numbers.
+    Rows whose router call never returned are NOT resumed: they record a fallback, not a
+    decision, and freezing a transient stall into the numbers is exactly the kind of eval
+    that cannot fail. `--fresh` ignores the log entirely, which is what to use after
+    changing ranking or traversal code -- otherwise stale rows would survive into the
+    numbers quietly.
     """
-    return {
-        row["qid"]: row
-        for row in jsonl.read(ROUTING_LOG)
-        if row.get("qid") and row.get("model") == model
-    }
+    prior: dict[str, dict[str, Any]] = {}
+    for row in jsonl.read(ROUTING_LOG):
+        if not row.get("qid") or row.get("model") != model:
+            continue
+        # A router that timed out did not decide anything -- it fell back to `both` because
+        # the call never returned, and chat_json only caches successes, so retrying is both
+        # possible and free of a stale answer. Resuming over one would freeze a transient
+        # Fireworks stall into the published numbers. `extract.py` draws the same line by
+        # quarantining failures into failures.jsonl instead of extractions.jsonl.
+        if "router_unreachable" in (row.get("degrade_reason") or ""):
+            prior.pop(row["qid"], None)
+            continue
+        prior[row["qid"]] = row
+    return prior
 
 
 def _eval(

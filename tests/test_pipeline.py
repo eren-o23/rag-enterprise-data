@@ -451,3 +451,33 @@ def test_routing_log_resume_takes_the_latest_row_per_model(tmp_path, monkeypatch
     assert None not in small, "ad-hoc runs carry no qid and must not resume anything"
     assert route_mod._prior("big")["m000"]["route"] == "refuse", "models must not cross"
     assert route_mod._prior("unrun") == {}
+
+
+def test_routing_log_never_resumes_over_a_router_timeout(tmp_path, monkeypatch):
+    """A timed-out router call recorded a fallback, not a decision. Resuming over it would
+    freeze a transient Fireworks stall into the published numbers -- and chat_json only
+    caches successes, so the retry is available and cannot return a stale answer."""
+    from kgrag import jsonl, route as route_mod
+
+    log = tmp_path / "routing_log.jsonl"
+    jsonl.append(log, [
+        {"qid": "m000", "model": "small", "route": "graph", "degrade_reason": None},
+        {"qid": "m001", "model": "small", "route": "both",
+         "degrade_reason": "router_unreachable:APITimeoutError+low_confidence"},
+        {"qid": "m002", "model": "small", "route": "both", "degrade_reason": "low_confidence"},
+    ])
+    monkeypatch.setattr(route_mod, "ROUTING_LOG", log)
+
+    prior = route_mod._prior("small")
+    assert "m001" not in prior, "a router timeout must be retried, not resumed"
+    assert prior["m000"]["route"] == "graph"
+    assert "m002" in prior, "an ordinary low-confidence degrade IS a real decision"
+
+    # A later successful decision supersedes an earlier timeout for the same question.
+    jsonl.append(log, [{"qid": "m001", "model": "small", "route": "graph", "degrade_reason": None}])
+    assert route_mod._prior("small")["m001"]["route"] == "graph"
+
+    # ...and a later timeout invalidates an earlier success, so the retry happens.
+    jsonl.append(log, [{"qid": "m000", "model": "small", "route": "both",
+                        "degrade_reason": "router_unreachable:APITimeoutError"}])
+    assert "m000" not in route_mod._prior("small")
