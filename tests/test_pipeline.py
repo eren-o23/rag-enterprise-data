@@ -721,3 +721,95 @@ def test_a_count_stated_in_words_scores_as_correct():
     assert stated_numbers("lists 67 subsidiaries") == {67}
     assert stated_numbers("1,234 filings and three others") == {1234, 3}
     assert 32 in stated_numbers("AMD lists 32 subsidiaries across 11 locations")
+
+
+# --------------------------------------------------------------------------- phase 5
+
+
+def test_the_baseline_never_touches_the_graph(monkeypatch):
+    """"Plain vector RAG" has to be a different system, not this one with the graph
+    subtracted. If the baseline still routes, its latency and cost carry a router call the
+    system it stands in for does not have, and the published delta is measured against
+    something that does not exist."""
+    from kgrag import answer as answer_mod
+
+    def explode(*a, **k):
+        raise AssertionError("the baseline must not call the router")
+
+    monkeypatch.setattr(answer_mod.route_mod, "route", explode)
+    monkeypatch.setattr(answer_mod.route_mod, "vector_path", lambda *a, **k: ["c1"])
+    monkeypatch.setattr(answer_mod, "passages", lambda conn, ids: [
+        {"chunk_id": "c1", "company": "INTEL CORP", "form": "10-K",
+         "section_path": "Item 1", "filing_date": "2025-11-01", "text": "Intel text."}
+    ])
+    monkeypatch.setattr(answer_mod.fireworks, "chat_json", lambda **k: {
+        "answerable": True, "refusal_reason": "",
+        "claims": [{"text": "Intel filed a 10-K.", "citations": ["c1"]}],
+    })
+
+    row = answer_mod.answer("Who audits Intel?", None, None, {}, graph=False, log=False)
+    assert row["arm"] == "vector" and row["route"] == "vector-only"
+    assert row["n_facts"] == 0 and row["n_aggregates"] == 0
+    assert row["cited"] == ["c1"] and not row["invented"]
+
+
+def test_the_three_arms_never_resume_each_others_rows(tmp_path, monkeypatch):
+    """Phase 4 shipped this bug with two arms. The baseline makes three, and a baseline
+    that resumed the graph arm's answers would publish a benchmark it never ran."""
+    from kgrag import answer as answer_mod
+    from kgrag import jsonl
+
+    log = tmp_path / "answer_log.jsonl"
+    monkeypatch.setattr(answer_mod, "ANSWER_LOG", log)
+    model = answer_mod.SYNTH_MODEL
+
+    def row(qid, constrain, graph):
+        return {"qid": qid, "model": model, "arm": answer_mod.arm_of(constrain, graph),
+                "synth_sha": answer_mod.synth_sha(constrain), "refusal_reason": ""}
+
+    jsonl.append(log, [row("m000", False, True), row("m000", True, True), row("m000", True, False)])
+    assert answer_mod.arm_of(True, False) == "vector"
+    for constrain, graph in ((False, True), (True, True), (True, False)):
+        assert set(answer_mod._prior(model, constrain, graph)) == {"m000"}
+    # The baseline is a distinct arm even at the same enforcement setting.
+    jsonl.append(log, [{"qid": "m001", "model": model, "arm": "vector",
+                        "synth_sha": answer_mod.synth_sha(True), "refusal_reason": ""}])
+    assert set(answer_mod._prior(model, True, graph=True)) == {"m000"}
+    assert set(answer_mod._prior(model, True, graph=False)) == {"m000", "m001"}
+
+
+def test_the_answer_key_accepts_an_alias_and_rejects_a_near_miss():
+    """The key is judgement-free, which means it is also literal. "Ernst & Young (EY)" is
+    the right answer to "who audits Intel" and does not contain "Ernst & Young LLP"; the
+    alias set resolution already mined is what closes that gap. It must not close so far
+    that AMD Japan Ltd. counts as AMD -- the same collision the entity index was built for."""
+    from kgrag.judge import key_score, names_it
+
+    index = {
+        "ernst and young llp": [{"canonical_id": "e1", "name": "Ernst & Young LLP",
+                                 "aliases": ["EY", "Ernst & Young"]}],
+        "advanced micro devices": [{"canonical_id": "e2", "name": "ADVANCED MICRO DEVICES INC",
+                                    "aliases": ["AMD"]}],
+    }
+    assert names_it("Intel's auditor is Ernst & Young (EY).", "Ernst & Young LLP", index)
+    assert names_it("AMD acquired Xilinx.", "ADVANCED MICRO DEVICES INC", index)
+    assert not names_it("The auditor is Deloitte & Touche LLP.", "Ernst & Young LLP", index)
+    # Tokens, not substrings: a two-letter alias must not match inside another word, or
+    # every answer containing "they" would name Ernst & Young.
+    assert not names_it("They surveyed the filings.", "Ernst & Young LLP", index)
+    # ponytail: a one-token alias over-credits -- "AMD Japan Ltd." contains "AMD", so the
+    # key reads it as naming AMD. Pinned rather than fixed: the key is a floor with a known
+    # bias toward the graph arm, and the judge cross-check is what catches this class.
+    assert names_it("AMD Japan Ltd. is a subsidiary.", "ADVANCED MICRO DEVICES INC", index)
+
+    q = {"hops": 1, "expected_answers": ["Ernst & Young LLP"], "gold_chunk_ids": ["c1"]}
+    answered = {"answerable": True, "claims": [{"text": "Intel's auditor is EY."}]}
+    refused = {"answerable": False, "claims": [], "refusal_reason": "no fact"}
+    assert key_score(q, answered, index) == "correct"
+    assert key_score(q, refused, index) == "incorrect"
+    # No key is not the same as a wrong answer: SUPPLIES and OFFICER_OF questions are the
+    # judge's alone, and scoring them 0 here would invent a failure.
+    assert key_score({**q, "expected_answers": []}, answered, index) is None
+    # Out-of-scope: refusing IS the correct answer, and no model is consulted for that.
+    assert key_score({"hops": 0, "gold_chunk_ids": []}, refused, index) == "correct"
+    assert key_score({"hops": 0, "gold_chunk_ids": []}, answered, index) == "incorrect"

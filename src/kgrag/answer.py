@@ -122,6 +122,16 @@ RULES:
    it is wrong, confident, and correctly cited."""
 
 
+def arm_of(constrain: bool, graph: bool) -> str:
+    """The three systems this module can be: two enforcement arms and the baseline.
+
+    It is one string because it is one axis of the log: `_prior` refuses to resume across
+    it, and an arm that resumed another arm's rows would report a comparison it never ran.
+    Phase 4 already hit that with two arms; the baseline makes three.
+    """
+    return "vector" if not graph else ("constrained" if constrain else "free")
+
+
 def _schema(valid_ids: list[str], constrain: bool) -> dict[str, Any]:
     """The answer schema, optionally with citations closed to the retrieved ids.
 
@@ -353,12 +363,36 @@ def answer(
     use_cache: bool = True,
     qid: str | None = None,
     log: bool = True,
+    graph: bool = True,
 ) -> dict[str, Any]:
-    """Route, assemble, synthesise, validate. Returns the log row."""
+    """Route, assemble, synthesise, validate. Returns the log row.
+
+    `graph=False` is the Phase 5 baseline: plain vector RAG, which is not this system with
+    the graph switched off but a different system entirely. It makes no router call at all —
+    embedding the question and taking the top k is the whole retrieval story — so its
+    latency and its cost are honestly those of a vector-only stack rather than this one's
+    minus a subtraction.
+
+    Everything downstream is held identical on purpose: same `SYSTEM`, same schema, same
+    citation contract, same enum constraint. Retrieval is the only variable, which is the
+    only way the delta means anything. The prompt still describes GRAPH COUNTS and GRAPH
+    FACTS blocks the baseline never receives — deliberately, because changing the prompt
+    too would leave two variables moving and no way to say which one the delta belongs to.
+    A counting question the baseline cannot answer is then a finding, not a handicap.
+    """
     start = time.perf_counter()
     before = fireworks.METER.usd
 
-    row = route_mod.route(question, session, conn, index, model=router_model, qid=qid, log=log)
+    if graph:
+        row = route_mod.route(question, session, conn, index, model=router_model, qid=qid, log=log)
+    else:
+        vector_ids = route_mod.vector_path(conn, question, route_mod.TOP_K)
+        # Not written to the routing log: no routing decision was made, and a row there
+        # claiming otherwise would corrupt the one artifact Phase 3's numbers come from.
+        row = {
+            "route": "vector-only", "chunk_ids": vector_ids, "graph_ids": [],
+            "vector_ids": vector_ids, "graph_facts": [], "graph_aggregates": [],
+        }
     facts = row["graph_facts"]
     fallback = None
 
@@ -392,7 +426,7 @@ def answer(
         "qid": qid,
         "question": question,
         "model": model,
-        "arm": "constrained" if constrain else "free",
+        "arm": arm_of(constrain, graph),
         "synth_sha": synth_sha(constrain),
         "route": row["route"],
         "fallback": fallback,
@@ -427,7 +461,12 @@ def run(
     constrained: bool = False,
     fresh: bool = False,
     use_cache: bool = True,
+    baseline: bool = False,
 ) -> None:
+    # The baseline runs constrained, because that is what the hybrid arm runs. Comparing a
+    # constrained system against a free one would put the enforcement question and the
+    # retrieval question in the same column, and Phase 4 already answered the first.
+    constrained = constrained or baseline
     index = route_mod.entity_index()
     if not index:
         raise SystemExit("data/entities.jsonl is empty — run `kgrag resolve` first.")
@@ -436,10 +475,10 @@ def run(
         if question:
             _print_one(answer(
                 question, session, conn, index,
-                model=model, constrain=constrained, use_cache=use_cache,
+                model=model, constrain=constrained, use_cache=use_cache, graph=not baseline,
             ))
             return
-        _eval(session, conn, index, model, constrained, fresh, use_cache)
+        _eval(session, conn, index, model, constrained, fresh, use_cache, not baseline)
 
 
 def _print_one(row: dict[str, Any]) -> None:
@@ -462,7 +501,7 @@ def _print_one(row: dict[str, Any]) -> None:
     print(f"latency    {row['latency_ms']} ms   spend ${row['usd']:.5f}")
 
 
-def _prior(model: str, constrain: bool) -> dict[str, dict[str, Any]]:
+def _prior(model: str, constrain: bool, graph: bool = True) -> dict[str, dict[str, Any]]:
     """qid -> the last logged answer for this model and arm. Same rules as `route._prior`.
 
     Rows written by a different prompt, schema or arm are not resumable, and neither is a
@@ -472,7 +511,7 @@ def _prior(model: str, constrain: bool) -> dict[str, dict[str, Any]]:
     """
     prior: dict[str, dict[str, Any]] = {}
     sha = synth_sha(constrain)
-    arm = "constrained" if constrain else "free"
+    arm = arm_of(constrain, graph)
     for row in jsonl.read(ANSWER_LOG):
         if not row.get("qid") or row.get("model") != model:
             continue
@@ -502,14 +541,16 @@ def _eval(
     constrain: bool,
     fresh: bool,
     use_cache: bool = True,
+    graph: bool = True,
 ) -> None:
     questions = list(jsonl.read(QUESTIONS))
     if not questions:
         raise SystemExit(f"{QUESTIONS} is empty — run `kgrag mine-questions` first.")
 
-    arm = "constrained" if constrain else "free"
+    arm = arm_of(constrain, graph)
+    label = "vector-only baseline, no graph, no router" if not graph else f"{arm} citations"
     print("=" * 74)
-    print(f"answer eval — {len(questions)} questions, {arm} citations, {model.split('/')[-1]}")
+    print(f"answer eval — {len(questions)} questions, {label}, {model.split('/')[-1]}")
     print("=" * 74)
     print(
         "Citations are chunk ids, so validating one is set membership against what was\n"
@@ -519,13 +560,13 @@ def _eval(
     )
 
     before = fireworks.METER.usd
-    prior = {} if fresh else _prior(model, constrain)
+    prior = {} if fresh else _prior(model, constrain, graph)
     rows: list[dict[str, Any]] = []
     for q in questions:
         done = prior.get(q["qid"])
         rows.append(done if done else answer(
             q["question"], session, conn, index,
-            model=model, constrain=constrain, use_cache=use_cache, qid=q["qid"],
+            model=model, constrain=constrain, use_cache=use_cache, qid=q["qid"], graph=graph,
         ))
     spend = fireworks.METER.usd - before
     resumed = sum(1 for q in questions if q["qid"] in prior)

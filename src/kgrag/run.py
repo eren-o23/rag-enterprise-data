@@ -17,7 +17,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="kgrag", description=__doc__)
     parser.add_argument(
         "stage",
-        choices=(*STAGES, "all", "verify", "models", "candidates", "mine-pairs", "mine-questions", "recall", "route", "answer", "sweep", "bakeoff"),
+        choices=(*STAGES, "all", "verify", "models", "candidates", "mine-pairs", "mine-questions", "recall", "route", "answer", "bench", "sweep", "bakeoff"),
     )
     parser.add_argument(
         "--budget",
@@ -47,6 +47,12 @@ def main() -> None:
         action="store_true",
         help="answer: put the retrieved chunk ids in the schema as an enum, so an "
         "invented citation cannot be generated (default: validate and regenerate)",
+    )
+    parser.add_argument(
+        "--baseline",
+        action="store_true",
+        help="answer: the Phase 5 vector-only baseline — no router, no graph, same prompt "
+        "and same citation contract, so retrieval is the only variable",
     )
     parser.add_argument(
         "--router-model",
@@ -113,7 +119,19 @@ def main() -> None:
                 constrained=args.constrained,
                 fresh=args.fresh,
                 use_cache=not args.no_cache,
+                baseline=args.baseline,
             )
+        except fireworks.BudgetExceeded as exc:
+            raise SystemExit(f"\nBUDGET STOP: {exc}") from exc
+        finally:
+            if fireworks.METER.calls or fireworks.METER.cached:
+                print(f"\n{fireworks.METER.report()}")
+        return
+    if args.stage == "bench":
+        from . import judge
+
+        try:
+            judge.run(use_cache=not args.no_cache)
         except fireworks.BudgetExceeded as exc:
             raise SystemExit(f"\nBUDGET STOP: {exc}") from exc
         finally:
