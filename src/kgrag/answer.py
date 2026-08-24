@@ -614,7 +614,8 @@ def _report_grounding(questions: list[dict[str, Any]], rows: list[dict[str, Any]
     print(
         "\n  Gold sets are the chunks whose text justified a graph edge — a lower bound, not\n"
         "  an exhaustive answer key, so a cited chunk outside the set is not necessarily\n"
-        "  wrong. Read this as a floor. Answer correctness needs a judge and is Phase 5."
+        "  wrong. Read this as a floor. Answer correctness needs a judge on every slice but\n"
+        "  aggregation, which is scored exactly below, and is Phase 5's job."
     )
 
 
