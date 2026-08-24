@@ -41,7 +41,7 @@ from . import fireworks, jsonl, load, retrieve
 from .config import ENTITIES, ROUTING_LOG
 from .embed import PRODUCTION_WIDTH, connect
 from .extract import _strict
-from .ontology import RELATION_PHRASE, RelationType
+from .ontology import ALLOWED_EDGES, RELATION_NOUN, RELATION_PHRASE, RelationType
 from .questions import QUESTIONS
 from .resolve import normalize
 
@@ -365,6 +365,86 @@ def verbalise(steps: Iterable[dict[str, Any]], limit: int = FACT_LIMIT) -> list[
     return list(seen.values())
 
 
+#: Aggregate facts kept per question, ranked by size, and how many neighbour names each
+#: one names before it says "and N others".
+AGG_LIMIT = 12
+AGG_EXAMPLES = 8
+
+#: An aggregation question asks about the SHAPE of a neighbourhood -- how many, in how many
+#: places -- and a ranked top-k walk structurally cannot answer it. `graph_path` returns the
+#: ten best-corroborated chunk ids around AMD, which are risk and auditor edges; the 32
+#: SUBSIDIARY_OF edges the question is about never make the cut. You cannot count from a
+#: sample.
+#:
+#: So the count is computed by the database, over the whole neighbourhood, with no cap.
+#: Cypher counts exactly and an LLM does not, which is the entire reason this is a query and
+#: not a prompt instruction. Grouping carries direction, because inbound and outbound mean
+#: opposite things: 32 companies point SUBSIDIARY_OF at AMD (AMD has 32 subsidiaries),
+#: while AMD pointing SUBSIDIARY_OF at something would mean AMD is owned by it.
+AGGREGATE = """
+MATCH (a:Entity {id: $id})-[r]-(o)
+WITH a, type(r) AS predicate, startNode(r).id = $id AS outbound,
+     collect(DISTINCT o.name) AS names,
+     apoc.coll.toSet(apoc.coll.flatten(collect(coalesce(r.chunk_ids, [])))) AS chunk_ids
+RETURN a.name AS anchor, predicate, outbound, size(names) AS n,
+       names[..$examples] AS examples, chunk_ids
+ORDER BY n DESC
+"""
+
+
+def _plural(noun: str) -> str:
+    """Entity type names, pluralised. Seven values, so the naive rule is the whole rule."""
+    return noun[:-1] + "ies" if noun.endswith("y") else noun + "s"
+
+
+def graph_aggregates(session: Session, node_ids: list[str]) -> list[dict[str, Any]]:
+    """Exact per-predicate neighbour counts around each anchor. No cap, no ranking loss."""
+    out: list[dict[str, Any]] = []
+    for node_id in node_ids:
+        for row in session.run(AGGREGATE, id=node_id, examples=AGG_EXAMPLES):
+            out.append(dict(row))
+    out.sort(key=lambda r: -r["n"])
+    return out
+
+
+def verbalise_aggregates(
+    aggregates: Iterable[dict[str, Any]], limit: int = AGG_LIMIT
+) -> list[dict[str, Any]]:
+    """Counts as sentences, marked as complete so the model quotes rather than recounts.
+
+    Outbound reuses `RELATION_PHRASE` with the object type from `ALLOWED_EDGES` -- the
+    anchor is singular, so the phrase agrees. Inbound needs `RELATION_NOUN`, because the
+    subject is a plural count and "32 distinct entities is a subsidiary of AMD" is what
+    the phrase would produce.
+    """
+    facts: list[dict[str, Any]] = []
+    for agg in aggregates:
+        if len(facts) == limit:
+            break
+        # A count of one is not an aggregate, it is a fact -- and `RELATION_NOUN` is plural,
+        # so it would render as "has 1 subsidiaries". The ranked path facts already carry it.
+        if agg["n"] < 2:
+            continue
+        predicate = RelationType(agg["predicate"])
+        shown = list(agg["examples"])
+        tail = agg["n"] - len(shown)
+        # Semicolons, because entity names contain commas ("Xilinx, Inc.") and a
+        # comma-separated list of them cannot be parsed back into items.
+        listed = "; ".join(shown) + (f"; and {tail} others" if tail > 0 else "")
+        if agg["outbound"]:
+            head = (f"{agg['anchor']} {RELATION_PHRASE[predicate]} {agg['n']} distinct "
+                    f"{_plural(ALLOWED_EDGES[predicate][1].value)}")
+        else:
+            head = f"{agg['anchor']} has {agg['n']} {RELATION_NOUN[predicate]}"
+        facts.append({
+            "text": f"{head} (complete count from the knowledge graph): {listed}.",
+            "chunk_ids": list(agg["chunk_ids"]),
+            "support": agg["n"],
+            "aggregate": True,
+        })
+    return facts
+
+
 def vector_path(conn: psycopg.Connection, question: str, k: int) -> list[str]:
     """Phase 2's measured query, unchanged. 1024 is the production column."""
     vector = fireworks.embed([question], dimensions=PRODUCTION_WIDTH, use_cache=True)[0]
@@ -488,6 +568,13 @@ def route(
     want_vector = measure_all or chosen in (Route.VECTOR, Route.BOTH)
     steps = graph_steps(session, node_ids, chain) if want_graph and node_ids else []
     graph_ids = chunk_ids_of(steps, k)
+    # Only for a neighbourhood shape -- an empty chain is the router saying "no fixed
+    # traversal fits", which is the same signal it emits for counting and summarising.
+    # A 1-hop or 2-hop question already names the traversal it wants, and answering it
+    # with corpus-wide counts would bury the fact under statistics.
+    aggregates = (
+        graph_aggregates(session, node_ids) if want_graph and node_ids and not chain else []
+    )
     vector_ids = vector_path(conn, question, k) if want_vector else []
 
     if chosen is Route.GRAPH:
@@ -520,6 +607,9 @@ def route(
         # and Phase 5 reads this log; without them a routing row records that the graph was
         # consulted and loses its answer, which cannot be reconstructed after the fact.
         "graph_facts": verbalise(steps),
+        # Exact counts over the whole neighbourhood, for the questions a ranked top-k walk
+        # cannot answer. Empty unless the router chose a neighbourhood shape.
+        "graph_aggregates": verbalise_aggregates(aggregates),
         # Whether both paths were run regardless of the route. Without this the log mixes
         # two incomparable kinds of row: eval rows (both paths measured) and answer-time
         # rows (only the chosen path run, so the other is empty BY DESIGN, not by failure).

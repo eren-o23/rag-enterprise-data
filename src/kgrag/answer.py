@@ -71,18 +71,26 @@ class Claim(BaseModel):
 
 class Answer(BaseModel):
     answerable: bool = Field(
-        description="True only if the context below states the answer. False if the "
-        "context is about the right subject but does not contain the fact asked for."
+        description="True if the context supports at least part of an answer. False only "
+        "if it supports none of it -- including when the context is about the right "
+        "subject but does not contain the fact asked for."
     )
-    claims: list[Claim] = Field(description="Empty when answerable is false.")
+    claims: list[Claim] = Field(
+        description="Every part of the answer the context supports. Empty when answerable "
+        "is false."
+    )
     refusal_reason: str = Field(
-        description="When answerable is false, what is missing. Empty otherwise."
+        description="What the context does not support: the whole question when answerable "
+        "is false, or the unanswered part of a compound question when it is true. Empty "
+        "only when the context answers the question fully."
     )
 
 
 SYSTEM = """You answer questions about SEC filings using ONLY the context provided.
 
-The context has two labelled blocks:
+The context has up to three labelled blocks:
+- GRAPH COUNTS: exact totals computed over the whole knowledge graph. These are complete.
+  Quote the number as given.
 - GRAPH FACTS: statements derived from a knowledge graph built from these filings. Each
   was verified against the filing text that asserts it.
 - PASSAGES: verbatim filing text retrieved for this question.
@@ -96,9 +104,21 @@ RULES:
 4. If the context does not state the answer, set answerable to false, leave claims empty,
    and say what is missing. Context about the right company that does not contain the fact
    asked for is NOT an answer -- refuse it.
+4b. A question with several parts may be partly answerable. Answer the parts the context
+   supports as claims, and name the unsupported parts in refusal_reason. Discarding a
+   supported fact because a different part of the question is unsupported loses a correct
+   answer; asserting the unsupported part loses the reader's trust.
 5. Prefer graph facts for connections between entities and passages for language, policy
    and detail. When both support a claim, cite both.
-6. Answer in as few claims as the question needs. One fact per claim."""
+6. Answer in as few claims as the question needs. One fact per claim.
+7. For "how many" questions, use the number in GRAPH COUNTS exactly as written. Do not
+   recount from the listed names -- the list is a sample and the count is complete.
+8. Use a GRAPH COUNT only if it counts exactly what was asked. A count of a different
+   relation, or of a coarser or finer thing than the question names, is not an answer:
+   "distinct Locations" includes cities, states and regions and is NOT a count of
+   countries. When no GRAPH COUNT matches what is asked, say the corpus does not support
+   that count. Substituting the nearest available number is the worst possible answer --
+   it is wrong, confident, and correctly cited."""
 
 
 def _schema(valid_ids: list[str], constrain: bool) -> dict[str, Any]:
@@ -162,7 +182,9 @@ CITES_PER_FACT = 3
 
 
 def build_context(
-    facts: list[dict[str, Any]], texts: list[dict[str, Any]]
+    facts: list[dict[str, Any]],
+    texts: list[dict[str, Any]],
+    aggregates: list[dict[str, Any]] | None = None,
 ) -> tuple[str, set[str]]:
     """The two labelled blocks, and the ids a citation is allowed to name.
 
@@ -178,8 +200,16 @@ def build_context(
     of it and the validator called them invented — six answers abandoned as
     `citation_unrecoverable` for citing their own context correctly.
     """
+    aggregates = aggregates or []
     blocks: list[str] = []
     citable: set[str] = set()
+    if aggregates:
+        lines = ["GRAPH COUNTS (complete, computed over the whole graph — do not recount)"]
+        for fact in aggregates:
+            shown = fact["chunk_ids"][:CITES_PER_FACT]
+            citable.update(shown)
+            lines.append(" ".join(f"[{c}]" for c in shown) + f" {fact['text']}")
+        blocks.append("\n".join(lines))
     if facts:
         lines = ["GRAPH FACTS (derived from the knowledge graph)"]
         for fact in facts:
@@ -342,7 +372,7 @@ def answer(
         row["chunk_ids"] = row["vector_ids"]
 
     texts = passages(conn, row["chunk_ids"])
-    context, valid_ids = build_context(facts, texts)
+    context, valid_ids = build_context(facts, texts, row.get("graph_aggregates"))
 
     if row["route"] == "refuse" or not context:
         # The router refused, or retrieval returned nothing. Either way there is nothing to
@@ -366,6 +396,7 @@ def answer(
         "route": row["route"],
         "fallback": fallback,
         "n_facts": len(facts),
+        "n_aggregates": len(row.get("graph_aggregates") or []),
         "n_passages": len(texts),
         "context_chars": len(context),
         "answerable": ans.answerable,
@@ -413,7 +444,8 @@ def run(
 def _print_one(row: dict[str, Any]) -> None:
     print(f"\nquestion   {row['question']}")
     print(f"route      {row['route']}" + (f"  [{row['fallback']}]" if row["fallback"] else ""))
-    print(f"context    {row['n_facts']} graph facts, {row['n_passages']} passages, "
+    print(f"context    {row['n_aggregates']} graph counts, {row['n_facts']} graph facts, "
+          f"{row['n_passages']} passages, "
           f"{row['context_chars']:,} chars")
     print()
     if not row["answerable"]:
@@ -421,6 +453,8 @@ def _print_one(row: dict[str, Any]) -> None:
     for claim in row["claims"]:
         print(f"  • {claim['text']}")
         print(f"    {' '.join('[' + c + ']' for c in claim['citations'])}")
+    if row["answerable"] and row["refusal_reason"]:
+        print(f"\nnot covered  {row['refusal_reason']}")
     if row["invented"]:
         print(f"\ninvented   {row['invented']}")
     print(f"\nattempts   {row['attempts']}   arm {row['arm']}")

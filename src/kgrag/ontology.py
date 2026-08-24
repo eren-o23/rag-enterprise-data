@@ -111,6 +111,28 @@ RELATION_PHRASE: dict[RelationType, str] = {
     RelationType.PARTY_TO: "is a party to",
 }
 
+#: What the *subjects* of a relation are called, collectively, from the object's side.
+#: Aggregation needs this and RELATION_PHRASE cannot supply it: an inbound count has a
+#: plural subject, so "32 distinct entities is a subsidiary of AMD" is what reusing the
+#: phrase produces. A noun sidesteps agreement entirely -- "AMD has 32 subsidiaries".
+#: Outbound aggregates need no noun: the phrase already agrees with a singular anchor.
+RELATION_NOUN: dict[RelationType, str] = {
+    RelationType.SUBSIDIARY_OF: "subsidiaries",
+    RelationType.ACQUIRED: "acquirers",
+    RelationType.COMPETES_WITH: "companies naming it as a competitor",
+    RelationType.SUPPLIES: "suppliers",
+    RelationType.PARTNERS_WITH: "named partners",
+    RelationType.AUDITED_BY: "audit clients",
+    RelationType.OFFICER_OF: "executive officers",
+    RelationType.DIRECTOR_OF: "board directors",
+    RelationType.OFFERS: "vendors offering it",
+    RelationType.INCORPORATED_IN: "companies incorporated there",
+    RelationType.OPERATES_IN: "companies with operations there",
+    RelationType.REGULATED_BY: "companies it regulates",
+    RelationType.EXPOSED_TO: "companies disclosing it as a material risk",
+    RelationType.PARTY_TO: "named parties",
+}
+
 #: RiskTopic is a closed vocabulary, not free text. Left open, the model invents a new
 #: risk phrasing per filing and every RiskTopic node has degree 1 — a graph that looks
 #: full and answers nothing.
@@ -224,6 +246,7 @@ if __name__ == "__main__":
     assert set(ALLOWED_EDGES) == set(RelationType), "every relation needs a type signature"
     assert set(RELATION_DOCS) == set(RelationType), "every relation needs prompt documentation"
     assert set(RELATION_PHRASE) == set(RelationType), "every relation needs a readable phrase"
+    assert set(RELATION_NOUN) == set(RelationType), "every relation needs an inbound noun"
     assert len(EntityType) == 7 and len(RelationType) == 14
 
     chunk = "Broadcom Inc. acquired VMware, Inc. in a transaction valued at $69 billion."
