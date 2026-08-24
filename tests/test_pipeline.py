@@ -97,6 +97,29 @@ def test_evidence_check_tolerates_whitespace_but_not_paraphrase():
     assert len(kept) == 1  # ragged whitespace is normalised, the span is genuinely present
 
 
+# --------------------------------------------------------------------------- embeddings
+
+
+def test_embedding_cache_key_separates_dimensions_without_invalidating_the_old_cache():
+    """The one Phase 2 change that can silently corrupt the vector store.
+
+    qwen3-embedding-8b is 4096 native and truncates via a `dimensions` parameter. If that
+    parameter is not in the cache key, a cached 4096-dim vector comes back for a 1024-dim
+    request and the mismatch surfaces far downstream, if at all. The None case must keep
+    hashing exactly as it did before, or the several thousand entity-name vectors
+    `kgrag resolve` already cached at 4096 are all invalidated for nothing.
+    """
+    import hashlib
+
+    from kgrag.fireworks import EMBED_MODEL, _embed_key
+
+    legacy = hashlib.sha256(f"{EMBED_MODEL}|Broadcom Inc.".encode()).hexdigest()
+    assert _embed_key(EMBED_MODEL, "Broadcom Inc.", None) == legacy
+
+    keys = {_embed_key(EMBED_MODEL, "Broadcom Inc.", d) for d in (None, 1024, 2000, 4096)}
+    assert len(keys) == 4
+
+
 # --------------------------------------------------------------------------- chunking
 
 

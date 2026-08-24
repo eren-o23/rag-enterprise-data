@@ -192,29 +192,63 @@ def chat_json(
     return payload
 
 
-def embed(texts: list[str], model: str = EMBED_MODEL, batch: int = 64) -> list[list[float]]:
-    """Embed short strings (entity names). Cached per string, so resolution reruns are free."""
+def _embed_key(model: str, text: str, dimensions: int | None) -> str:
+    """Cache key for one embedding. The dimension MUST be in here.
+
+    `qwen3-embedding-8b` returns 4096 dims natively and accepts an OpenAI-style
+    `dimensions` parameter to truncate (it is Matryoshka-trained, so truncation is
+    principled rather than lossy chopping). Without the dimension in the key, a cached
+    4096-dim vector is handed back for a 1024-dim request and the mismatch surfaces far
+    downstream, if at all.
+
+    The suffix is omitted when no dimension is requested, so the several thousand
+    entity-name vectors `kgrag resolve` already cached at native 4096 stay valid.
+    """
+    suffix = f"|{dimensions}" if dimensions else ""
+    return hashlib.sha256(f"{model}|{text}{suffix}".encode()).hexdigest()
+
+
+def embed(
+    texts: list[str],
+    model: str = EMBED_MODEL,
+    batch: int = 64,
+    dimensions: int | None = None,
+    use_cache: bool = True,
+) -> list[list[float]]:
+    """Embed strings. Cached per string, so resolution reruns are free.
+
+    `kgrag embed` passes use_cache=False: 2,743 chunks at three widths is ~390 MB of JSON
+    sitting beside a Postgres row that is already durable, and that stage resumes from a
+    `WHERE emb_N IS NULL` query instead.
+    """
     out: list[list[float] | None] = [None] * len(texts)
     todo: list[int] = []
 
     for i, text in enumerate(texts):
-        key = hashlib.sha256(f"{model}|{text}".encode()).hexdigest()
-        path = _cache_path(key)
-        if path.exists():
+        path = _cache_path(_embed_key(model, text, dimensions))
+        if use_cache and path.exists():
             out[i] = json.loads(path.read_text())
             METER.cached += 1
         else:
             todo.append(i)
 
+    # `dimensions=None` must be omitted entirely rather than sent as null: the parameter is
+    # an OpenAI extension and Fireworks rejects an explicit null for it.
+    extra = {"dimensions": dimensions} if dimensions else {}
+
     api = client() if todo else None
     for start in range(0, len(todo), batch):
         idxs = todo[start : start + batch]
-        response = _with_backoff(lambda: api.embeddings.create(model=model, input=[texts[i] for i in idxs]))
+        response = _with_backoff(
+            lambda: api.embeddings.create(model=model, input=[texts[i] for i in idxs], **extra)
+        )
         METER.record(model, response.usage.total_tokens, 0)
         for i, item in zip(idxs, response.data):
             out[i] = item.embedding
-            key = hashlib.sha256(f"{model}|{texts[i]}".encode()).hexdigest()
-            _cache_path(key).write_text(json.dumps(item.embedding))
+            if use_cache:
+                _cache_path(_embed_key(model, texts[i], dimensions)).write_text(
+                    json.dumps(item.embedding)
+                )
 
     return out  # type: ignore[return-value]
 
