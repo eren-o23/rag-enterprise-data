@@ -50,6 +50,16 @@ ROUTER_MODEL = "accounts/fireworks/models/gpt-oss-20b"
 
 TOP_K = 10
 
+#: The router emits ~50 tokens against a fixed schema. `fireworks.DEFAULT_TIMEOUT` is 90s,
+#: sized for extraction streaming a whole chunk's worth of JSON, and inheriting it here is
+#: how a 57-question eval turns into hours: Fireworks' serverless endpoint intermittently
+#: stalls, and 6 backoff attempts at 90s is nine minutes burned on ONE question. Measured
+#: healthy latency is 3-7s for both gpt-oss-20b and gpt-oss-120b, so anything past 20s is
+#: a stall, not a slow answer. Three attempts, then the question routes to `both`, which is
+#: already the defined answer for "the router could not decide".
+ROUTER_TIMEOUT = 20.0
+ROUTER_ATTEMPTS = 3
+
 #: How many paths one traversal returns before ranking. Generous: paths are deduped down
 #: to chunk_ids afterwards, and a hub entity fans out hard.
 PATH_LIMIT = 200
@@ -307,7 +317,10 @@ def make_plan(question: str, model: str = ROUTER_MODEL) -> tuple[Plan, str | Non
     plain RuntimeError, not an openai exception, so it still propagates and stops the run.
     """
     try:
-        payload = fireworks.chat_json(system=SYSTEM, user=question, schema=SCHEMA, model=model)
+        payload = fireworks.chat_json(
+            system=SYSTEM, user=question, schema=SCHEMA, model=model,
+            timeout=ROUTER_TIMEOUT, attempts=ROUTER_ATTEMPTS,
+        )
     except (APIStatusError, APIConnectionError) as exc:
         return _unknown(), f"router_unreachable:{type(exc).__name__}"
     try:

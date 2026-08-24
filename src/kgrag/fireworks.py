@@ -130,7 +130,13 @@ class Meter:
 METER = Meter()
 
 
-def client(base_url: str = BASE_URL) -> OpenAI:
+#: Default read timeout. Sized for extraction, where one call streams a whole chunk's
+#: worth of JSON. A caller with a small, bounded output should pass something much lower --
+#: see `route.ROUTER_TIMEOUT` for why waiting 90s on a 50-token answer is never useful.
+DEFAULT_TIMEOUT = 90.0
+
+
+def client(base_url: str = BASE_URL, timeout: float = DEFAULT_TIMEOUT) -> OpenAI:
     # Without an explicit timeout, a connection that drops mid-response hangs the
     # underlying socket read forever - no exception, so _with_backoff never gets a
     # chance to retry. A 2743-call overnight run stalled silently for 11+ hours on
@@ -138,7 +144,7 @@ def client(base_url: str = BASE_URL) -> OpenAI:
     # was never coming. max_retries=0 because _with_backoff already owns retry policy;
     # the SDK's own retry-on-timeout would silently double it.
     api_key = require("FIREWORKS_API_KEY") if base_url == BASE_URL else "ollama"
-    return OpenAI(api_key=api_key, base_url=base_url, timeout=90.0, max_retries=0)
+    return OpenAI(api_key=api_key, base_url=base_url, timeout=timeout, max_retries=0)
 
 
 def _cache_path(key: str) -> Any:
@@ -156,6 +162,8 @@ def chat_json(
     temperature: float = 0.0,
     base_url: str = BASE_URL,
     use_cache: bool = True,
+    timeout: float = DEFAULT_TIMEOUT,
+    attempts: int = 6,
 ) -> dict[str, Any]:
     """One constrained-decoding call, cached by content.
 
@@ -176,13 +184,16 @@ def chat_json(
         METER.cached += 1
         return json.loads(path.read_text())
 
+    # timeout and attempts are deliberately NOT in the cache key above: they describe how
+    # hard to try, not what was asked, and the same question must hash the same either way.
     response = _with_backoff(
-        lambda: client(base_url).chat.completions.create(
+        lambda: client(base_url, timeout).chat.completions.create(
             model=model,
             temperature=temperature,
             messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
             response_format={"type": "json_schema", "json_schema": {"name": "extraction", "schema": schema}},
-        )
+        ),
+        attempts=attempts,
     )
     usage = response.usage
     METER.record(model, usage.prompt_tokens, usage.completion_tokens)
