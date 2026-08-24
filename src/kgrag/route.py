@@ -601,6 +601,26 @@ def _eval(
         for key in ("vector_ids", "graph_ids", "chunk_ids")
     ]
     print(f"  {'all':12} {len(answerable):>4} " + " ".join(f"{c:>9.3f}" for c in cols))
+    # The graph column is NOT a pure measurement of the graph. Entities come out of the
+    # same router call that picks the route, so a router that times out or wrongly refuses
+    # names no entity, the traversal has no anchor, and the graph scores 0 for a reason
+    # that has nothing to do with the graph. Reporting that as a graph result would
+    # understate it and invert the comparison this table exists to make.
+    unanchored = [i for i in answerable if not rows[i]["resolved_ids"]]
+    if unanchored:
+        anchored = [i for i in answerable if i not in set(unanchored)]
+        floor = statistics.mean(
+            _recall(rows[i]["graph_ids"], questions[i]["gold_chunk_ids"], k) for i in anchored
+        )
+        print(
+            f"\n  {len(unanchored)} of {len(answerable)} answerable questions gave the traversal no\n"
+            f"  anchor ({', '.join(questions[i]['qid'] for i in unanchored)}) — the router named no\n"
+            f"  entity, so the graph column scores them 0 by construction. That is a router\n"
+            f"  failure being charged to the graph. Over the {len(anchored)} anchored questions the\n"
+            f"  graph path scores {floor:.3f}, which is the graph's own number; the column above\n"
+            f"  is the end-to-end number a user would actually get."
+        )
+
     print(
         "\n  'routed' is what the router actually returned; 'graph' and 'vector' are both\n"
         "  paths run for every question regardless of the route, which is why the vector\n"
