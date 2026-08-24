@@ -576,6 +576,38 @@ Citation validation is a guarantee about provenance and says nothing about relev
 truth; 319 citations resolved, zero invented, and the system still published a jurisdiction
 it inferred from a name.
 
+## What broke
+
+Held back until the end of the project on purpose, because the pattern only shows up across
+all five phases. **Every bug in this list was found by two measurements disagreeing with each
+other, and not one of them was found by a test failing.** Several were found on runs that
+reported success.
+
+| phase | what it looked like | what it was |
+|---|---|---|
+| 1 | Extraction ran at 2.4 chunks/min; 17h projected | Exponential backoff overshooting a 10 RPM cap that resets every minute. Pace under the quota instead of reacting to it. |
+| 1 | A run alive in `ps` for 11.6 hours with 0 progress | No explicit client timeout: a dropped connection blocks the socket read forever, no exception, sockets in `CLOSE_WAIT`. |
+| 1 | AMD and Skyworks lost Business, Risk Factors and Legal Proceedings entirely, no error | `get_filings(form="10-K")` prefix-matches `10-K/A`, and an amendment carries only the items it amends. Looked exactly like a parser bug. |
+| 1 | Resolution scoring **F1 .986** | Graded against its own answer key. The real number, held out: P=1.000 / R=0.297. |
+| 1 | `kgrag load` **passing**, 4,685 edges | 317 `SUBSIDIARY_OF` edges — 47% of the relation — silently discarded as self-loops, because resolution was merging subsidiaries into their parents. The eval set could not surface the shape: ranking candidates by \|cos − τ\| structurally excludes near-identical pairs. |
+| 2 | ANN recall **1.000 at every `ef_search`**, non-monotonic | At 2,743 rows the planner costs a seq scan cheaper than an HNSW probe and takes it, silently answering the "ANN" arm exactly. Both arms now forced, confirmed with `EXPLAIN`. |
+| 2 | An eval question appearing twice with different gold sets | The miner templated two edges into one sentence, so retrieval that found one was marked wrong for the other. Merged on question text. |
+| 3 | The router refusing subsidiaries, auditors and products **that are in its own graph** | The prompt described the corpus as "24 companies". They are the filers, not the scope. 0.895 → 0.947. |
+| 3 | A prompt edit + rerun reporting **byte-identical numbers at $0.00000** | The resume replayed 57 decisions made by a prompt that no longer existed. Now fingerprinted with `router_sha`. |
+| 3 | `gpt-oss-20b` reporting **$0.00000 spend** and six unrouted questions | Not an error rate — a timed-out call records no usage. The same six questions stall it every time; the 120b answers them in ~1s. |
+| 3 | 2-hop graph recall of 0.433 | The eval was charging router failures to the graph column. The graph's own number is 0.675. |
+| 3 | Entity lookup losing "AMD" | Lucene length-normalises it below tiny nodes literally named `AMD Japan Ltd.`. The fulltext index built for entity lookup cannot do entity lookup. |
+| 4 | Six answers abandoned as `citation_unrecoverable` | The citable set was the route's top-10 while the context printed up to 60 ids. The model was cited for reading its own context correctly. |
+| 4 | A p50 of **7 ms** and $0.00003/question | The cost report was timing the cache. Same bug as the Phase 1 bakeoff, second occurrence. |
+| 4 | ~600 "invented" citations per sweep | The id copied with its `[brackets]`. Counting those as invention would have made the arm comparison measure formatting rather than grounding. |
+| 4 | *"AMD operates in 11 countries"* — correctly cited | Two unrelated sets that happen to share a size, neither of them a count of countries. Every mechanism built to catch invented sources reported green. |
+| 5 | A judge disagreeing with the answer key on 19 of 48 answers | The judge was grading against four truncated gold chunks and treating a floor as exhaustive — penalising the arm that retrieves more, on the axis being measured. Twice. |
+
+The recurring shape is worth stating plainly: **a passing run is not evidence.** Four of these
+shipped green — a `verify` that passed while discarding half a relation, an eval that graded
+itself, a resume that replayed a deleted prompt, a benchmark that timed its own cache. What
+caught them was always a second number that should have agreed and did not.
+
 ## Stack
 
 Python 3.12 · Neo4j · pgvector · Fireworks (`gpt-oss-120b`, `qwen3-embedding-8b`) · FastAPI
