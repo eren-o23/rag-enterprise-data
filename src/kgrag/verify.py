@@ -119,7 +119,7 @@ def _check_vectors(n_chunks: int) -> list[str]:
         print(f"\nvector store: {rows:,} rows")
         for width in embed.WIDTHS:
             got = conn.execute(
-                f"SELECT count(emb_{width}) FROM chunks"  # noqa: S608
+                f"SELECT count(emb_{width}) FROM chunks"
             ).fetchone()[0]
             flag = "  <- INCOMPLETE" if got != rows else ""
             print(f"  emb_{width:<5} {got:>6,} embedded{flag}")
