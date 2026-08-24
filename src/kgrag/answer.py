@@ -187,6 +187,28 @@ def build_context(facts: list[dict[str, Any]], texts: list[dict[str, Any]]) -> s
 # ---------------------------------------------------------------------------
 
 
+#: Chunk ids appear in the context wrapped in square brackets, and gpt-oss-120b copies the
+#: brackets along with the id often enough to matter -- "[8b64d880da42f277]" for an id that
+#: really was retrieved. That is a delimiter it failed to strip, not a source it made up,
+#: and three repair rounds do not talk it out of the habit. Counting it as invention would
+#: be wrong twice: it overstates the invented rate, and it makes the free-vs-constrained
+#: comparison meaningless, because the constrained arm cannot emit a bracket at all and
+#: would "win" on formatting rather than on grounding. Stripped narrowly -- surrounding
+#: brackets and whitespace only -- so a genuinely fabricated id still fails.
+def _clean(citation: str) -> str:
+    return citation.strip().strip("[]").strip()
+
+
+def normalise_citations(ans: Answer) -> int:
+    """Strip delimiters off every citation in place. Returns how many needed it."""
+    fixed = 0
+    for claim in ans.claims:
+        cleaned = [_clean(c) for c in claim.citations]
+        fixed += sum(1 for before, after in zip(claim.citations, cleaned) if before != after)
+        claim.citations = cleaned
+    return fixed
+
+
 def invented(ans: Answer, valid_ids: set[str]) -> list[str]:
     """Cited ids that were never retrieved. The thing the spec says to reject on."""
     return sorted({c for claim in ans.claims for c in claim.citations} - valid_ids)
@@ -220,8 +242,8 @@ def synthesise(
     valid_ids: set[str],
     model: str = SYNTH_MODEL,
     constrain: bool = False,
-) -> tuple[Answer, int, list[str]]:
-    """Generate, validate the citations, regenerate on a miss. Returns (answer, attempts, invented).
+) -> tuple[Answer, int, list[str], int]:
+    """Generate, validate, regenerate on a miss. Returns (answer, attempts, invented, reformatted).
 
     Never raises. `route.make_plan` learned this from `extract.py`: an uncaught API error
     partway through a paced sweep costs the whole sweep. An unreachable model here is an
@@ -230,6 +252,7 @@ def synthesise(
     schema = _schema(sorted(valid_ids), constrain)
     rejected: list[str] = []
     attempts = 0
+    reformatted = 0
 
     for _ in range(MAX_REPAIRS + 1):
         attempts += 1
@@ -239,12 +262,13 @@ def synthesise(
                 model=model, timeout=SYNTH_TIMEOUT, attempts=SYNTH_ATTEMPTS,
             )
         except (APIStatusError, APIConnectionError) as exc:
-            return _refusal(f"synthesiser_unreachable:{type(exc).__name__}"), attempts, rejected
+            return _refusal(f"synthesiser_unreachable:{type(exc).__name__}"), attempts, rejected, reformatted
         try:
             ans = Answer.model_validate(payload)
         except ValidationError:
-            return _refusal("synthesiser_invalid_answer"), attempts, rejected
+            return _refusal("synthesiser_invalid_answer"), attempts, rejected, reformatted
 
+        reformatted += normalise_citations(ans)
         bad = invented(ans, valid_ids)
         if not bad:
             # A claim with no citation at all is ungrounded too -- it passes the "no
@@ -253,10 +277,10 @@ def synthesise(
             if any(not claim.citations for claim in ans.claims):
                 rejected = ["(a claim carried no citation)"]
                 continue
-            return ans, attempts, []
+            return ans, attempts, [], reformatted
         rejected = bad
 
-    return _refusal("citation_unrecoverable"), attempts, rejected
+    return _refusal("citation_unrecoverable"), attempts, rejected, reformatted
 
 
 def _refusal(reason: str) -> Answer:
@@ -304,9 +328,13 @@ def answer(
     if row["route"] == "refuse" or not context:
         # The router refused, or retrieval returned nothing. Either way there is nothing to
         # ground an answer in, so no model call is made and the question costs $0.00.
-        ans, attempts, bad = _refusal("no_context" if row["route"] != "refuse" else "router_refused"), 0, []
+        ans, attempts, bad, reformatted = (
+            _refusal("no_context" if row["route"] != "refuse" else "router_refused"), 0, [], 0
+        )
     else:
-        ans, attempts, bad = synthesise(question, context, valid_ids, model, constrain)
+        ans, attempts, bad, reformatted = synthesise(
+            question, context, valid_ids, model, constrain
+        )
 
     cited = sorted({c for claim in ans.claims for c in claim.citations})
     out = {
@@ -326,6 +354,7 @@ def answer(
         "claims": [c.model_dump() for c in ans.claims],
         "cited": cited,
         "invented": bad,
+        "reformatted": reformatted,
         "attempts": attempts,
         "retrieved_ids": sorted(valid_ids),
         "latency_ms": round((time.perf_counter() - start) * 1000, 1),
@@ -459,6 +488,8 @@ def _report_citations(rows: list[dict[str, Any]]) -> None:
     print(f"  claims                      {claims}")
     print(f"  citations                   {total}")
     print(f"  claims with no citation     {uncited}")
+    print(f"  citations needing a strip   {sum(r['reformatted'] for r in rows)}"
+          "   (id copied with its [brackets] — see _clean)")
     print(f"  answers needing a repair    {len(repaired)}")
     print(f"  abandoned after repairs     {len(lost)}"
           + (f"  {[r['qid'] for r in lost]}" if lost else ""))
