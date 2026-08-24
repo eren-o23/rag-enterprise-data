@@ -11,6 +11,8 @@ dependencies = [
     "numpy>=2.0",
     "python-dotenv>=1.0",
     "psycopg[binary]>=3.2",
+    "fastapi>=0.115",     # the spec's "done when": an endpoint with validated citations
+    "uvicorn>=0.34",
 ]
 
 [project.optional-dependencies]

@@ -488,3 +488,128 @@ def test_routing_log_never_resumes_over_a_router_timeout(tmp_path, monkeypatch):
     jsonl.append(log, [{"qid": "m000", "model": "small", "route": "both", "router_sha": sha,
                         "degrade_reason": "router_unreachable:APITimeoutError"}])
     assert "m000" not in route_mod._prior("small")
+
+
+# --------------------------------------------------------------------------- answer
+
+
+def test_a_path_walked_backwards_still_reads_forwards():
+    """The verbaliser's one real trap. `arrows([])` is `-[r0]-()`, undirected, so a
+    neighbourhood walk enters half its edges against their stored direction. Reading the
+    endpoints off the relationship (startNode/endNode) instead of off nodes(path) is what
+    keeps "TSMC supplies AMD" from being published as "AMD supplies TSMC" -- an inversion
+    that produces a confident, well-cited, exactly-backwards fact with no error anywhere."""
+    from kgrag.route import verbalise
+
+    # Both steps are the SAME edge; the second is what an inbound walk hands back.
+    outbound = {"type": "SUPPLIES", "subject": "TSMC", "object": "AMD",
+                "chunk_ids": ["c1"], "support": 6}
+    facts = verbalise([outbound])
+    assert facts[0]["text"] == "TSMC supplies AMD"
+
+    # Same edge reached from AMD's side: Cypher still reports TSMC as the start node.
+    facts = verbalise([{**outbound}])
+    assert facts[0]["text"] == "TSMC supplies AMD", "direction comes from the edge, not the walk"
+
+    # Deduped on the rendered text, and the cap is honoured.
+    many = [{"type": "ACQUIRED", "subject": "A", "object": f"B{i}",
+             "chunk_ids": [f"c{i}"], "support": 1} for i in range(50)]
+    assert len(verbalise(many + many, limit=20)) == 20
+
+
+def test_every_relation_renders_without_a_keyerror():
+    """`verbalise` indexes RELATION_PHRASE by RelationType. A relation added to the
+    ontology without a phrase would not fail at import or in the ontology self-check
+    (which only compares key sets) -- it would fail at answer time, on the one question
+    that happens to traverse it."""
+    from kgrag.ontology import RelationType
+    from kgrag.route import verbalise
+
+    steps = [{"type": r.value, "subject": "S", "object": "O", "chunk_ids": ["c"], "support": 1}
+             for r in RelationType]
+    assert len(verbalise(steps, limit=99)) == len(RelationType)
+
+
+def test_citable_ids_are_exactly_what_the_context_printed():
+    """The bug this cost six abandoned answers. The context renders up to CITES_PER_FACT
+    ids per graph fact, which is more ids than the route's top-k chunk list contains; a
+    citable set computed anywhere but here drifts from what the model can see, and the
+    model gets blamed for citing its own context."""
+    from kgrag.answer import build_context
+
+    facts = [{"text": "A acquired B", "chunk_ids": ["g1", "g2", "g3", "g4"], "support": 3}]
+    texts = [{"chunk_id": "v1", "company": "X", "form": "10-K",
+              "section_path": "Item 1", "filing_date": "2026-01-01", "text": "body"}]
+    context, citable = build_context(facts, texts)
+
+    assert citable == {"g1", "g2", "g3", "v1"}, "the 4th id is not printed, so it is not citable"
+    assert "g4" not in context
+    for shown in citable:
+        assert f"[{shown}]" in context, "every citable id must appear in bracket form"
+    assert "GRAPH FACTS" in context and "PASSAGES" in context, "the labels are the spec's ask"
+
+
+def test_a_bracketed_id_is_a_delimiter_slip_but_a_wrong_id_is_not():
+    """gpt-oss-120b cites "[abc]" for an id that really was retrieved, ~600 times over a
+    57-question sweep. Counting that as invention overstates the rate and makes the
+    free-vs-constrained comparison measure formatting rather than grounding. The strip has
+    to be narrow enough that a genuinely fabricated id still fails."""
+    from kgrag.answer import Answer, Claim, invented, normalise_citations
+
+    ans = Answer(answerable=True, refusal_reason="", claims=[
+        Claim(text="a", citations=["[c1]", " c2 ", "c3"]),
+        Claim(text="b", citations=["deadbeefdeadbeef"]),
+    ])
+    assert normalise_citations(ans) == 2, "only the two that changed are counted"
+    assert ans.claims[0].citations == ["c1", "c2", "c3"]
+    assert invented(ans, {"c1", "c2", "c3"}) == ["deadbeefdeadbeef"], "a real miss survives"
+
+
+def test_the_repair_prompt_differs_so_the_cache_cannot_replay_the_bad_answer():
+    """chat_json keys its cache on (model, prompt version, system, user, schema). A repair
+    that resends a byte-identical prompt is served the same invalid answer off disk
+    forever, at $0.00, looking exactly like a model that refuses to correct itself. Naming
+    the rejected ids is what makes the retry a retry."""
+    from kgrag.answer import _user
+
+    first = _user("Q", "CTX")
+    repair = _user("Q", "CTX", ["badid1", "badid2"])
+    assert repair != first
+    assert "badid1" in repair and "badid2" in repair
+    assert _user("Q", "CTX", []) == first, "no rejects means no repair preamble"
+
+
+def test_the_constrained_arm_closes_citations_to_the_retrieved_set():
+    """The constrained arm's whole claim: an invented citation is unreachable rather than
+    caught. That holds only if the enum is the retrieved set, and the two arms must hash
+    differently or they resume each other's rows out of the answer log."""
+    from kgrag.answer import _schema, synth_sha
+
+    ids = ["b2", "a1"]
+    free = _schema(ids, False)["$defs"]["Claim"]["properties"]["citations"]["items"]
+    con = _schema(ids, True)["$defs"]["Claim"]["properties"]["citations"]["items"]
+
+    assert free == {"type": "string"}
+    assert con == {"type": "string", "enum": ["a1", "b2"]}, "sorted, so the key is stable"
+    assert synth_sha(True) != synth_sha(False)
+
+
+def test_a_refused_question_never_reaches_the_model(monkeypatch):
+    """A refusal that still pays for a synthesis call is not a refusal. The router's
+    `refuse` and an empty context both have to short-circuit before chat_json."""
+    from kgrag import answer as answer_mod
+
+    def explode(**kwargs):
+        raise AssertionError("the model must not be called for a refused question")
+
+    monkeypatch.setattr(answer_mod.fireworks, "chat_json", explode)
+    monkeypatch.setattr(answer_mod.jsonl, "append", lambda *a, **k: None)
+    monkeypatch.setattr(answer_mod.route_mod, "route", lambda *a, **k: {
+        "route": "refuse", "graph_ids": [], "vector_ids": [], "chunk_ids": [],
+        "graph_facts": [], "question": "What is the capital of France?",
+    })
+
+    row = answer_mod.answer("What is the capital of France?", None, None, {}, log=False)
+    assert row["answerable"] is False
+    assert row["refusal_reason"] == "router_refused"
+    assert row["attempts"] == 0 and row["usd"] == 0.0
