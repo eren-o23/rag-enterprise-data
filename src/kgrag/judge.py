@@ -103,14 +103,17 @@ def key_score(
     """
     if question["hops"] == 0:
         return "correct" if not row["answerable"] else "incorrect"
+    expected = question.get("expected_answers") or []
+    # Whether a question HAS a key is a property of the question, not of the answer. Asking
+    # about the answer first scores a refusal on a keyless question as incorrect, which
+    # would give the two arms different key populations and make the columns incomparable.
+    if not expected and question.get("category") != "aggregation":
+        return None
     if not row["answerable"]:
         return "incorrect"
     text = answer_text(row)
     if question.get("category") == "aggregation":
         return "correct" if question["expected_count"] in answer_mod.stated_numbers(text) else "incorrect"
-    expected = question.get("expected_answers") or []
-    if not expected:
-        return None
     # Any keyed answer counts. A merged row ("Which company did Teradyne acquire?" covers
     # three edges) is answered by naming any one of them -- the question is singular.
     return "correct" if any(names_it(text, name, index) for name in expected) else "incorrect"

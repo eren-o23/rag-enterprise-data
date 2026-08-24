@@ -819,3 +819,89 @@ They carry `"category": "aggregation"` and are deliberately **excluded from the 
 slices**. An aggregation question needs one hop, but it is not a 1-hop question — folding
 it in would move the published Phase 2 recall figures and shift `MIN_1HOP_RECALL_AT_10`'s
 baseline underneath a floor that was sized against a specific population.
+
+## Phase 5: the answer key extends `expected_count` to every mined question
+
+Phase 4 ended with exactly one judgement-free accuracy number in the project: the 8
+aggregation questions, scored against `expected_count`, a total computed by Cypher. Every
+other stratum was going to need a judge.
+
+Most of them do not. A mined question is templated off one specific edge, so the edge's far
+endpoint *is* the answer: "Which company owns X?" is answered by the `SUBSIDIARY_OF` object,
+and a chain question by the terminal edge's object. `expected_answers` now carries it on 43
+of 47 mined rows, derived from structure with no hand-judgement, the same discipline
+`gold_chunk_ids` already follows.
+
+Two templates key on nothing and say so rather than keying on something close. "What does X
+supply to Y?" is answered by a product and "What executive role does X hold at Y?" by a job
+title — neither is an endpoint of the edge. Keying those on the nearest available name would
+build an answer key that marks correct answers wrong, which is worse than having no key.
+Those four questions are the judge's alone.
+
+Regenerating a committed eval set is the risk here, so it is gated: 65 rows in, 65 rows out,
+and every field but the new one byte-identical. A mined set that moved would take every
+published number in the README with it.
+
+## The vector baseline is a different system, not this one with the graph switched off
+
+`kgrag answer --baseline` makes **no router call at all**. It embeds the question, takes the
+top 10, and synthesises. The temptation was to reuse the router and simply ignore the graph
+path, which would have been three lines shorter and wrong: the baseline stands in for a
+plain vector RAG stack, and that stack has no router to pay for. Its latency and its cost
+have to be its own, not this system's minus a subtraction.
+
+Everything downstream is held identical on purpose — same `SYSTEM` prompt, same `Answer`
+schema, same citation contract, same enum constraint, same model. Retrieval is the only
+variable, which is the only condition under which the delta belongs to retrieval.
+
+That includes keeping the prompt's GRAPH COUNTS and GRAPH FACTS rules even though the
+baseline never receives those blocks. Trimming them would be kinder to the baseline and
+would leave two variables moving at once, with no way to say which one the delta came from.
+A counting question the baseline cannot answer is then a finding about vector RAG, not a
+handicap this repo imposed on it.
+
+`arm` becomes a three-way field (`free` / `constrained` / `vector`) and `_prior` keys on it.
+Phase 4 already shipped the two-arm version of this bug, where each arm's resume silently
+evicted the other's rows and reported "0 resumed" for 57 answers sitting on disk.
+
+## Correctness is measured twice, because the key flatters the graph arm
+
+The structural key is judgement-free, reproducible and free to run. It is also literal, and
+its literalness is not neutral between the two arms: it rewards naming the canonical entity,
+and the graph arm answers *out of* the knowledge graph in canonical entity names while the
+baseline answers out of filing prose. An instrument biased toward the system the benchmark
+exists to promote cannot be the only instrument.
+
+Resolution's alias sets close part of that gap — "Intel's auditor is Ernst & Young (EY)" is
+correct, and matching on tokens rather than substrings keeps "EY" from matching inside
+"they" — but not all of it. A one-token alias still over-credits: "AMD Japan Ltd." contains
+"AMD". That is pinned by a test rather than fixed, because the fix is a judge.
+
+So both instruments run and both are published, never blended. The key is the floor. The
+judge is the headline. Where they disagree, the disagreement is printed by qid, because a
+disagreement is either a judge error or a key blind spot and those are different problems.
+
+## The judge is validated three ways before any of its numbers are read
+
+This project has twice shipped an eval that could not fail: Phase 1 graded resolution
+against its own answer key, and Phase 3 resumed routing decisions from a prompt that no
+longer existed. Both reported excellent numbers. An LLM judge is the easiest instrument yet
+to build in that shape, so `kgrag bench` runs the validations first and in the report:
+
+1. **Exact-count sanity.** On the aggregation slice the judge is handed the verified count
+   in its reference, because the gold chunk is a page of an Exhibit 21 and asking a model to
+   count 67 names off it would grade the judge's arithmetic instead of the answer. Its
+   agreement there is therefore a sanity check, not an independent measurement, and it is
+   labelled as one.
+2. **Key agreement.** Two instruments built from the same edge through different channels —
+   a structured endpoint and a model reading the filing prose — on every question that has
+   both.
+3. **The negative control.** Every answered row is re-graded against a *different* question.
+   A judge that rubber-stamps plausible text passes checks 1 and 2 and fails only this one.
+   Below 90% rejection, `bench` exits instead of publishing: verdicts that cannot fail are
+   not a measurement, and caveating them would be worse than not having them.
+
+The judge grades against the filing text that justified the edge, never against the context
+the answering system retrieved. Grading against the latter measures whether the answer
+follows from what the system found — groundedness, which Phase 4 already measured, and which
+is green even for an answer that is confidently wrong.
