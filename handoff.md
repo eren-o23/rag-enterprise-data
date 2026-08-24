@@ -18,27 +18,42 @@ and [docs/decisions.md](docs/decisions.md) for the full design-decision log.
 ## Current State
 
 **Phase 4 is complete and measured.** `kgrag answer` merges both retrieval paths into one
-grounded answer. **288 published citations across two full sweeps, zero invented.** Both
-enforcement arms were built and compared over the same 57 questions:
+grounded answer. **319 citations across two full sweeps of 65 questions, zero invented.**
+Both enforcement arms were built and compared, uncached so latency and cost are real:
 
 | | free (validate + regenerate) | constrained (enum) |
 |---|---|---|
-| answers produced | 45/57 | 45/57 |
-| claims / citations | 56 / 133 | 84 / 155 |
+| answers produced | 51/65 | **53/65** |
+| claims / citations | 85 / 158 | 94 / 161 |
 | invented ids published | 0 | 0 |
-| citations needing a delimiter strip | 598 | 0 |
-| answers needing a repair round | 2 | 0 |
+| citations needing a delimiter strip | 566 | 0 |
+| answers abandoned after repairs | 2 (`m016`, `m020`) | 0 |
 | out-of-scope refused | 5/5 | 5/5 |
-| answerable wrongly refused | 7/52 | 7/52 |
-| latency p50 / p95 | 6,545 / 11,213 ms | 6,544 / 10,073 ms |
-| $ per answered question | $0.00124 | $0.00116 |
+| answerable wrongly refused | 9/60 | 7/60 |
+| aggregation exact counts | 8/8 | 8/8 |
+| latency p50 / p95 | 6,628 / 12,768 ms | 6,516 / 9,870 ms |
+| $ per answered question | $0.00145 | $0.00131 |
 
-The constraint costs nothing measurable and deletes the repair loop entirely. `POST /ask`
-(`uv run uvicorn kgrag.api:app`) answers with validated citations — the spec's "Done when".
-Phase 4 spend: **~$0.23**. See README "Phase 4 results".
+**The model never hallucinated a citation.** Every rejection in the free arm was a
+formatting artifact over real retrieved ids — the delimiter copied in (`[c86081...]`), or
+several ids packed into one JSON string (`"00ce...] [21c8..."`, all seven constituents
+genuinely retrieved). Reject-and-regenerate caught zero invented sources because there were
+none, and it threw away two correct answers doing so. The constrained arm cannot emit a
+malformed citation, which is why it ends with more answers. `_clean` is deliberately narrow
+(surrounding brackets and whitespace only) and is NOT being widened to absorb further
+malformations — that would make the invented rate meaningless.
+
+**Aggregation now works and is its own stratum.** Counts come from Cypher over the whole
+neighbourhood (you cannot count from a top-k sample: AMD's ten best-corroborated chunks are
+risk and auditor edges, and its 32 SUBSIDIARY_OF edges never make the cut). The eval set is
+**65 questions with all five strata the spec names**, and routing is **62/65 (95.4%)**.
+
+`POST /ask` (`uv run uvicorn kgrag.api:app`) answers with validated citations — the spec's
+"Done when". Phase 4 spend: **~$0.45**. See README "Phase 4 results".
 
 **Phase 3 is complete and measured.** `kgrag route` routes each question to the graph
-path, the vector path, both, or a refusal. **Routing accuracy 54/57 (94.7%)**; routed
+path, the vector path, both, or a refusal. **Routing accuracy 62/65 (95.4%)** after the
+aggregation stratum was added (54/57 when Phase 3 closed); routed
 retrieval beats vector-only at every hop count, and the 2-hop slice goes **0.288 -> 0.758
 (2.6x)**. Router costs **$0.021** per full sweep on `gpt-oss-120b` and reruns are free.
 See README "Phase 3 results".
@@ -146,6 +161,24 @@ first: this machine has 8 GB and swap was near capacity during the Phase 1 bakeo
   $0.00 — router calls are content-cached. Phase 5 reads it.
 
 ### Phase 5 specifics — read before writing any benchmark code
+
+- **R@10 is NOT valid on the aggregation slice.** The graph scores 0.088 there while
+  answering 8/8 correctly: the answer is a computed total, not a passage, and a 45-chunk
+  gold set cannot be recalled at k=10. Score that slice on `expected_count` instead — an
+  exact answer key derived from Cypher, so it needs no judge. It is the only
+  judgement-free accuracy number in the project; validate the judge against it.
+- **Aggregation questions carry `"category": "aggregation"` and are excluded from every hop
+  slice** (`retrieve._slices`, `route._eval`, `answer._report_grounding`). They need one hop
+  but are not 1-hop questions, and folding them in moves published Phase 2 figures and
+  shifts `MIN_1HOP_RECALL_AT_10`'s baseline underneath it.
+- **Do not widen `_clean` to absorb more citation malformations.** It strips surrounding
+  brackets and whitespace, nothing else. The free arm's two abandoned answers packed several
+  real ids into one JSON string; normalising that away would make the invented-citation rate
+  meaningless. The honest finding is that free-text citations fail in ways constrained
+  decoding structurally cannot.
+- **A correctly-cited answer can still be wrong.** "AMD operates in 11 countries" cited a
+  real retrieved chunk and answered a different question. Citation validation is a guarantee
+  about *provenance*, never about *relevance* — do not let Phase 5's writeup blur the two.
 
 - **Citations are chunk ids, and the citable set comes from `build_context`, not the
   caller.** It returns `(context, citable)` together precisely so the two cannot drift.
@@ -279,7 +312,7 @@ Optional cleanup, none of it blocking:
 ## Open Questions / Blockers
 
 _None blocking._ Fireworks is working with enormous budget headroom (**~$2.23 of $55** spent
-across all four phases: $1.41 extract, $0.57 embed, $0.02 routing, ~$0.23 synthesis), and
+across all four phases: $1.41 extract, $0.57 embed, $0.02 routing, ~$0.45 synthesis), and
 Phases 1-4 are complete and committed. Two things to be aware of rather than solve:
 
 - **This machine is memory-constrained**: 8 GB, and swap was near capacity during the bakeoff
@@ -355,3 +388,20 @@ _Append-only. One line per session — never overwrite previous entries._
   not a director of an acquirer — so a graph route that traverses to nothing now falls back
   to vector, logged and counted. Confirmed the traversal refactor is behaviour-preserving:
   `kgrag route --fresh` reproduces 54/57 and every R@10 cell at $0.00000.
+- 2026-08-24: Added the aggregation stratum Phase 5 needs. Found that a ranked top-k walk
+  structurally cannot answer a counting question — AMD's ten best-corroborated chunks are
+  risk and auditor edges, so its 32 SUBSIDIARY_OF edges never surface, and no value of k
+  fixes a property of the whole neighbourhood. Counts now come from Cypher, grouped by
+  predicate AND direction, handed over as stated facts: 8/8 exact, grounding precision
+  1.000. Eval set is 65 questions with all five strata the spec names; routing 62/65 with
+  every existing hop slice byte-identical. Two findings worth carrying forward. First, the
+  near-miss count: the initial version answered "AMD operates in 11 countries" — correctly
+  cited and wrong, because AMD's OPERATES_IN has 11 endpoints and its subsidiaries'
+  INCORPORATED_IN has 11 distinct locations, two unrelated sets sharing a size, neither a
+  count of countries. Citation validation cannot catch that class of error; every mechanism
+  built to catch invented sources reported green. Second, across 65 questions and both arms
+  the model never fabricated a chunk id — every rejection was punctuation over real ids, so
+  reject-and-regenerate caught zero hallucinations while discarding two correct answers.
+  R@10 is meaningless on the aggregation slice (graph scores 0.088 where it answers 8/8),
+  so Phase 5 must score it on correctness, which needs no judge: expected_count is an exact
+  structural answer key.

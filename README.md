@@ -13,8 +13,8 @@ related entities — the class of question where plain vector RAG quietly fails.
 |---|---|---|
 | 1 | Entity + relationship extraction into Neo4j | **complete** — 4,496 entities, 4,685 edges, gate passing |
 | 2 | pgvector index over the same chunks | **complete** — 2,743 chunks × 3 widths, recall measured by hop count |
-| 3 | Question router (graph vs. vector) | **complete** — 91% routing accuracy, multi-hop recall 2.5x the vector baseline |
-| 4 | Grounded answer synthesis with validated citations | **complete** — 0 invented citations, both enforcement arms measured |
+| 3 | Question router (graph vs. vector) | **complete** — 95.4% routing accuracy, multi-hop recall 2.5x the vector baseline |
+| 4 | Grounded answer synthesis with validated citations | **complete** — 319 citations, 0 invented; aggregation 8/8 exact |
 | 5 | Benchmark vs. vector-only baseline | not started |
 
 ## Phase 1 results
@@ -152,7 +152,7 @@ recall 1.000 at every `ef_search`. The tell was non-monotonicity — ef=4 scorin
 
 ## Phase 3 results
 
-A router picks the retrieval path per question. **Routing accuracy 54/57 (94.7%)**, and
+A router picks the retrieval path per question. **Routing accuracy 62/65 (95.4%)**, and
 routed retrieval beats the vector-only baseline at every hop count.
 
 ### R@10 by hop count — routed vs. the Phase 2 baseline
@@ -163,6 +163,9 @@ routed retrieval beats the vector-only baseline at every hop count.
 | 2-hop | 10 | 0.288 | 0.775 | **0.758** |
 | 3-hop | 12 | 0.328 | 0.704 | **0.671** |
 | all | 52 | 0.469 | 0.768 | **0.721** |
+
+(Aggregation is measured separately — see Phase 4. R@10 is not a meaningful metric on that
+slice, and mixing it in would move these figures without measuring anything.)
 
 The 2-hop slice is the headline: **0.288 → 0.758, a 2.6x improvement**, on exactly the
 questions vector search is structurally unable to answer because the middle entity is never
@@ -187,11 +190,13 @@ running a traversal for questions that have no graph answer.
 | 1-hop mined | 27 | 27 | **1.000** |
 | 1-hop hand-written | 3 | 3 | **1.000** |
 | multi-hop | 22 | 20 | 0.909 |
-| **all** | **57** | **54** | **0.947** |
+| aggregation | 8 | 8 | **1.000** |
+| **all** | **65** | **62** | **0.954** |
 
 Expected routes are derived from the eval set rather than hand-assigned, the same discipline
 `kgrag mine-questions` uses for gold chunks: `hops == 0` must refuse, `hops >= 2` must reach
-the graph, and the hand-written 1-hop paraphrases must reach vector. Mined 1-hop questions
+the graph, aggregation must reach the graph (no ten passages contain a corpus-wide
+total), and the hand-written 1-hop paraphrases must reach vector. Mined 1-hop questions
 accept either path — they are templated off a graph edge *and* quote the canonical entity
 name verbatim, so both paths are legitimately correct and scoring one would be inventing a
 ground truth.
@@ -251,7 +256,8 @@ name thousands of such entities. Correcting that one paragraph took 1-hop accura
 ## Phase 4 results
 
 Both retrieval paths merge into one answer, and **every published citation resolves to a
-chunk that was actually retrieved** — 288 citations across two full sweeps, zero invented.
+chunk that was actually retrieved** — 319 citations across two full sweeps of 65 questions,
+zero invented.
 
 A citation is a chunk id: the same 16-character key minted in `chunk.py`, carried on every
 Neo4j edge and used as the pgvector primary key. Validating one is a set-membership test
@@ -262,24 +268,41 @@ passage cite in the same currency.
 
 The spec asks to reject invalid citations and regenerate. `ontology.py`'s design says to put
 the retrieved ids in the schema as an `enum` so an invalid one is unreachable. Both were
-built and run over the same 57 questions.
+built and run over the same 65 questions, uncached, so latency and cost are measured.
 
 | | free (validate + regenerate) | constrained (enum) |
 |---|---|---|
-| answers produced | 45/57 | 45/57 |
-| claims / citations | 56 / 133 | 84 / 155 |
+| answers produced | 51/65 | **53/65** |
+| claims / citations | 85 / 158 | 94 / 161 |
 | **invented ids published** | **0** | **0** |
-| citations needing a delimiter strip | 598 | 0 |
-| answers needing a repair round | 2 | 0 |
+| citations needing a delimiter strip | 566 | **0** |
+| answers needing a repair round | 1 | 0 |
+| answers abandoned after repairs | **2** | **0** |
 | out-of-scope refused | 5/5 | 5/5 |
-| answerable wrongly refused | 7/52 | 7/52 |
-| latency p50 / p95 | 6,545 / 11,213 ms | 6,544 / 10,073 ms |
-| $ per answered question | $0.00124 | $0.00116 |
+| answerable wrongly refused | 9/60 | 7/60 |
+| aggregation exact counts | 8/8 | 8/8 |
+| latency p50 / p95 | 6,628 / 12,768 ms | 6,516 / **9,870** ms |
+| $ per answered question | $0.00145 | $0.00131 |
 
-**The constraint is free and deletes the repair loop.** Same answer rate, same refusals,
-latency inside noise, marginally cheaper because it never pays for a regeneration. The free
-arm is kept because it is the only one that can *measure* invention; the constrained arm is
-the API default.
+**The constraint is free, and it buys two answers.** Same refusal behaviour, lower tail
+latency, marginally cheaper because it never pays for a regeneration — and it deletes the
+repair loop entirely.
+
+### The model never actually hallucinated a citation
+
+This is the result worth stating plainly. Every citation the free arm rejected turned out to
+be a **formatting artifact over real retrieved ids**, not an invented source:
+
+- ~570 per sweep were the id copied with its delimiter — `[c8608131724ee274]`.
+- The two abandoned answers packed several ids into one JSON string:
+  `"00ce393a62cbff06] [21c81acc49148857"`. All seven constituent ids were genuinely
+  retrieved.
+
+So reject-and-regenerate caught zero hallucinations, because there were none to catch. What
+it caught was punctuation — and it threw away two correct answers doing so. Constrained
+decoding cannot emit a malformed citation at all, which is why it ends with more answers
+rather than fewer. The delimiter strip is deliberately narrow (surrounding brackets and
+whitespace only), so a fabricated or truncated id would still fail.
 
 ### Graph paths become sentences before they reach the prompt
 
@@ -297,43 +320,64 @@ edges arrive against their stored direction — direction is read off the relati
 (`startNode`/`endNode`), never off path order. Read it off the path and the system publishes
 "AMD supplies TSMC": confident, well-cited, and exactly backwards, with no error anywhere.
 
+### Aggregation: you cannot count from a top-k sample
+
+"How many subsidiaries does AMD list?" was unanswerable while the graph held the answer
+exactly. A ranked walk returns AMD's ten best-corroborated chunk ids — risk and auditor
+edges — and the 32 `SUBSIDIARY_OF` edges never make the cut. No value of k fixes that,
+because a count is a property of the whole neighbourhood.
+
+Counts are now computed by Cypher over the entire neighbourhood, grouped by predicate **and
+direction**, and handed over as stated facts:
+
+```
+GRAPH COUNTS (complete, computed over the whole graph — do not recount)
+[708d2e33283bdf29] ADVANCED MICRO DEVICES INC has 32 subsidiaries (complete count from
+the knowledge graph): Mipsology S.A.S.; Xilinx, Inc.; ... and 24 others.
+```
+
+**8/8 exact counts correct**, grounding precision **1.000** on the slice.
+
+### The near-miss count: correctly cited, and wrong
+
+The first version of this answered *"AMD operates in 11 countries."* AMD's own `OPERATES_IN`
+has 11 endpoints; its subsidiaries' `INCORPORATED_IN` has 11 distinct locations. Two
+unrelated sets that happen to share a size — and neither counts countries, because
+`Location` spans streets, cities, states and regions (AMD's eleven include `United States`,
+`U.S.`, `Europe`, and `2485 Augustine Drive, Santa Clara, California 95054`).
+
+**Citation validation cannot catch this.** The citation resolved; the claim was grounded in a
+real chunk; it simply answered a different question. Every mechanism built to catch invented
+sources reports green. The prompt now forbids substituting a near-miss count, and the answer
+schema supports partial answers — so `h000` returns the exact 32 and names the country count
+as unsupported, which is the truthful shape of that question.
+
+### Where R@10 stops meaning anything
+
+| slice | n | vector | graph | routed |
+|---|---|---|---|---|
+| 1-hop | 30 | 0.586 | 0.792 | 0.728 |
+| 2-hop | 10 | 0.288 | 0.775 | 0.758 |
+| 3-hop | 12 | 0.328 | 0.704 | 0.671 |
+| **aggregation** | **8** | **0.274** | **0.088** | **0.088** |
+
+The graph scores 0.088 on the slice it answers **8/8 correctly**, and loses to vector there.
+Both are true: the answer is a computed total, not a passage, so recall against gold chunks
+measures the wrong object, and a 45-chunk gold set cannot be recalled at k=10.
+
+Phase 5 is built on recall-as-proxy and that assumption does not extend here — the
+aggregation slice must be scored on correctness. Which needs no judge: the count came from
+Cypher, so `expected_count` in each eval row is an exact answer key derived from structure.
+
 ### Refusal moved from a guess to a fact
 
 Phase 3's `refuse` is a judgement about corpus scope made *before* looking at the corpus.
 Grounding is the real backstop, and it costs nothing: a refused question short-circuits
-before any model call at **$0.00000 and ~2 ms**. All 5 out-of-scope questions are refused,
-and 7 of 52 answerable ones are refused for stated reasons ("the provided context does not
-contain...").
+before any model call at **$0.00000 and ~2 ms**. All 5 out-of-scope questions are refused.
 
 `h007` — "Who is the chief executive of OpenAI?" — is exactly this case, and the reason its
 Phase 3 label was left alone. OpenAI is in the graph; the fact asked for is in no filing.
 The system now reaches retrieval and refuses for the true reason instead of guessing.
-
-### Grounding, and what it is not
-
-Share of cited chunks that appear in the question's gold set — 1-hop **0.662**, 2-hop
-**0.567**, 3-hop **0.213** (free arm). These are **floors**. Gold sets are the chunks whose
-text justified a graph edge, a lower bound rather than an exhaustive answer key, so a cited
-chunk outside the set is not necessarily wrong.
-
-Whether the answers are *correct* is deliberately not measured here: that needs a judge, and
-a judge is an instrument that has to be validated before it is trusted. Phase 5.
-
-### What the measurements caught
-
-- **Six answers were abandoned for citing their own context correctly.** The context renders
-  20 graph facts carrying up to 3 chunk ids each; the validator was checking against the
-  route's top-10 `graph_ids`. Answers produced 39 → 45, abandonments 6 → 0, wrong refusals
-  13 → 7. The citable set now comes back from the function that prints it.
-- **The cost report was timing the cache** — p50 of 7 ms, because 126 of 127 calls came off
-  disk. Same bug as the Phase 1 bakeoff. Latency is now measured only over billed questions.
-- **~600 "invented" citations were brackets.** The model copies `[c8608131…]` verbatim,
-  delimiter included, for ids that really were retrieved. Counting those as invention would
-  have made the arm comparison measure formatting rather than grounding.
-- **The router's own example question has no path in the graph.** Sundström has eight
-  `DIRECTOR_OF` edges and none of those companies has an `ACQUIRED` edge — but he is
-  `OFFICER_OF` NXP, which acquired Freescale, and the passages say so. A graph route that
-  traverses to nothing now falls back to vector, logged and counted.
 
 ### The endpoint
 
