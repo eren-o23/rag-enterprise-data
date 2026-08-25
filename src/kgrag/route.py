@@ -517,7 +517,9 @@ def _unknown() -> Plan:
     )
 
 
-def make_plan(question: str, model: str = ROUTER_MODEL) -> tuple[Plan, str | None]:
+def make_plan(
+    question: str, model: str = ROUTER_MODEL, use_cache: bool = True
+) -> tuple[Plan, str | None]:
     """One constrained call. Returns the plan and a failure reason, never raises.
 
     `extract.py` learned this the expensive way: a single un-quarantined API exception
@@ -532,7 +534,7 @@ def make_plan(question: str, model: str = ROUTER_MODEL) -> tuple[Plan, str | Non
     try:
         payload = fireworks.chat_json(
             system=SYSTEM, user=question, schema=SCHEMA, model=model,
-            timeout=ROUTER_TIMEOUT, attempts=ROUTER_ATTEMPTS,
+            timeout=ROUTER_TIMEOUT, attempts=ROUTER_ATTEMPTS, use_cache=use_cache,
         )
     except (APIStatusError, APIConnectionError) as exc:
         return _unknown(), f"router_unreachable:{type(exc).__name__}"
@@ -584,17 +586,25 @@ def route(
     qid: str | None = None,
     measure_all: bool = False,
     log: bool = True,
+    use_cache: bool = True,
 ) -> dict[str, Any]:
     """Route one question and retrieve. Returns the log row, which is also the result.
 
     `measure_all` runs both paths whatever the route chose, so `kgrag route`'s eval can put
     vector, graph and routed in the same table. It is off in normal use -- running the path
     the router rejected is exactly the cost routing exists to avoid.
+
+    `use_cache=False` has to reach the router call, not just the synthesiser. Phase 5's first
+    latency table was measured with `kgrag answer --no-cache`, which bypassed the answer cache
+    and left the router reading its own: a cold router call is ~6.7s at p50 and was being
+    served from disk in 16ms, so the graph arm's published p95 excluded an LLM call a novel
+    question actually pays -- while the vector baseline it was compared against has no router
+    at all. Third time this project has timed its own cache (see decisions.md).
     """
     start = time.perf_counter()
     before = fireworks.METER.usd
 
-    plan, router_error = make_plan(question, model)
+    plan, router_error = make_plan(question, model, use_cache=use_cache)
     node_ids = [
         i for i in (resolve_entity(name, index, session) for name in plan.entities) if i
     ]

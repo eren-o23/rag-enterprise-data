@@ -852,3 +852,33 @@ def test_a_chain_renders_as_one_fact_ending_at_the_answer():
     facts = verbalise(sorted(many, key=lambda s: (s["path"], s["hop"])), limit=20)
     assert len(facts) == 20
     assert all(" → " in f["text"] for f in facts), "no walk was truncated mid-chain"
+
+
+def test_no_cache_reaches_the_router_not_just_the_synthesiser(monkeypatch):
+    """Phase 5's first latency table was measured with --no-cache and still read the router
+    out of cache: 16 ms instead of a ~6.7s call, on the arm being compared against a
+    baseline that has no router at all. The flag has to reach every model call the query
+    makes, or the number describes the filesystem. Third occurrence in this project."""
+    from kgrag import answer as answer_mod
+    from kgrag import route as route_mod
+
+    seen: list[bool] = []
+
+    def spy(**kwargs):
+        seen.append(kwargs.get("use_cache", True))
+        return {"route": "vector", "confidence": "high", "entities": [],
+                "shape": "neighbourhood", "chain": []}
+
+    monkeypatch.setattr(route_mod.fireworks, "chat_json", spy)
+    route_mod.make_plan("q", use_cache=False)
+    route_mod.make_plan("q", use_cache=True)
+    assert seen == [False, True], "the router must honour the flag it is handed"
+
+    # ...and `answer` must hand it down rather than defaulting it back to True.
+    monkeypatch.setattr(answer_mod.route_mod, "route",
+                        lambda *a, **k: seen.append(k.get("use_cache", True)) or {
+                            "route": "refuse", "graph_ids": [], "vector_ids": [],
+                            "chunk_ids": [], "graph_facts": []})
+    monkeypatch.setattr(answer_mod, "passages", lambda conn, ids: [])
+    answer_mod.answer("q", None, None, {}, use_cache=False, log=False)
+    assert seen[-1] is False

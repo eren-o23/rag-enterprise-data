@@ -389,7 +389,8 @@ def answer(
     before = fireworks.METER.usd
 
     if graph:
-        row = route_mod.route(question, session, conn, index, model=router_model, qid=qid, log=log)
+        row = route_mod.route(question, session, conn, index, model=router_model, qid=qid,
+                              log=log, use_cache=use_cache)
     else:
         vector_ids = route_mod.vector_path(conn, question, route_mod.TOP_K)
         # Not written to the routing log: no routing decision was made, and a row there
