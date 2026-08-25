@@ -11,26 +11,33 @@ retrieval: the baseline embeds the question, takes the top 10 passages, and make
 call at all. Accuracy is answer correctness, graded by a judge that is validated before it is
 quoted (below), with a judgement-free structural key reported alongside it.
 
-| slice | n | vector-only | graph + vector | delta |
-|---|---|---|---|---|
-| 1-hop | 30 | 0.633 | **0.767** | +0.133 |
-| 2-hop | 10 | 0.100 | **0.500** | +0.400 |
-| 3-hop | 12 | 0.083 | **0.417** | +0.333 |
-| aggregation | 8 | 0.125 | **0.875** | +0.750 |
-| out-of-scope (refuse) | 5 | 1.000 | 1.000 | — |
-| **all** | **65** | **0.415** | **0.692** | **+0.277** |
+| slice | n | vector-only | graph + vector | delta | 95% CI |
+|---|---|---|---|---|---|
+| 1-hop | 30 | 0.633 | **0.733** | +0.100 | [-0.067, +0.267] — parity |
+| 2-hop | 10 | 0.100 | **0.800** | +0.700 | [+0.400, +1.000] |
+| 3-hop | 12 | 0.083 | **0.417** | +0.333 | [+0.083, +0.583] |
+| aggregation | 8 | 0.125 | **0.875** | +0.750 | [+0.250, +1.000] |
+| out-of-scope (refuse) | 5 | 0.800 | 1.000 | +0.200 | [+0.000, +0.600] |
+| **all** | **65** | **0.400** | **0.723** | **+0.323** | **[+0.185, +0.462]** |
 
 | | vector-only | graph + vector |
 |---|---|---|
-| latency p50 / p95 | 6,553 / **9,354** ms | 6,450 / 10,301 ms |
-| $ per query | $0.00141 | **$0.00130** |
+| latency p50 / p95 | **6,823** / **10,658** ms | 6,713 / 10,727 ms |
+| $ per query | $0.00144 | **$0.00137** |
 | one-time ingestion | **$0.00** | $1.98 |
 
-**Near-parity at one hop, and the gap opens with depth** — 0.633 → 0.767 at one hop, 0.091 →
-0.455 across the 22 multi-hop questions. That curve is the whole claim: embeddings answer
-what a passage states and lose what a chain implies. The graph arm is also *cheaper* per
-query, because the router refuses out-of-scope questions before any synthesis call — and
-slower at the tail, because a traversal runs before the model sees anything.
+**Parity at one hop, and a gap that opens with depth.** The 1-hop interval crosses zero, so
+the two systems are indistinguishable there on 30 questions — which is the honest version of
+the result the spec predicts, and a stronger claim than a small unexplained edge. Every
+multi-hop and aggregation interval clears zero: 0.091 → 0.591 across the 22 multi-hop
+questions. That curve is the whole point. Embeddings answer what a passage states and lose
+what a chain implies.
+
+Intervals are a paired bootstrap over per-question correctness, 10,000 resamples, fixed seed.
+Slices of 5-12 questions cannot resolve a small difference and say so.
+
+The graph arm is also *cheaper* per query, because the router refuses out-of-scope questions
+before any synthesis call — and it costs $1.98 to build, which the baseline never pays.
 
 ```mermaid
 flowchart LR
@@ -58,7 +65,7 @@ flowchart LR
 | 2 | pgvector index over the same chunks | **complete** — 2,743 chunks × 3 widths, recall measured by hop count |
 | 3 | Question router (graph vs. vector) | **complete** — 95.4% routing accuracy, multi-hop recall 2.5x the vector baseline |
 | 4 | Grounded answer synthesis with validated citations | **complete** — 319 citations, 0 invented; aggregation 8/8 exact |
-| 5 | Benchmark vs. vector-only baseline | **complete** — accuracy by hop count against plain vector RAG, judged and validated |
+| 5 | Benchmark vs. vector-only baseline | **complete** — 0.400 → 0.723 overall, parity at 1-hop, +0.700 at 2-hop |
 
 ## Phase 1 results
 
@@ -449,18 +456,18 @@ Both arms ran uncached, so latency and cost are measured rather than read back o
 
 ### Where the baseline actually fails
 
-Not by hallucinating. Vector-only **refuses 24 of 60** answerable questions where the hybrid
+Not by hallucinating. Vector-only **refuses 29 of 60** answerable questions where the hybrid
 refuses 7, and the refusals are honest: it retrieves ten passages about the right company and
 correctly reports that the fact asked for is not in them. *"The provided passages list many
 AMD subsidiaries"* — and the question asked how many there are.
 
 | judge verdict | vector-only | graph + vector |
 |---|---|---|
-| correct | 27 | **45** |
-| partial | 3 | 4 |
-| incorrect | 8 | 6 |
-| **refused an answerable question** | **24** | **7** |
-| unverifiable (the eval set, not the system) | 3 | 3 |
+| correct | 26 | **47** |
+| partial | 1 | 1 |
+| incorrect | 7 | 6 |
+| **refused an answerable question** | **29** | **7** |
+| unverifiable (the eval set, not the system) | 2 | 4 |
 
 That is the failure mode this project set out to find. A two-hop question names one entity and
 asks about something reached through another, so the passages that answer it never share
@@ -471,12 +478,12 @@ is not a retrieval question.
 
 | slice | n | keyed | key: vector | key: hybrid | judge: vector | judge: hybrid |
 |---|---|---|---|---|---|---|
-| 1-hop | 30 | 23 | 0.478 | 0.826 | 0.633 | 0.767 |
-| 2-hop | 10 | 10 | 0.000 | 0.500 | 0.100 | 0.500 |
+| 1-hop | 30 | 23 | 0.565 | 0.783 | 0.633 | 0.733 |
+| 2-hop | 10 | 10 | 0.000 | 0.600 | 0.100 | 0.800 |
 | 3-hop | 12 | 10 | 0.000 | 0.500 | 0.083 | 0.417 |
 | aggregation | 8 | 8 | 0.000 | 1.000 | 0.125 | 0.875 |
-| out-of-scope | 5 | 5 | 1.000 | 1.000 | 1.000 | 1.000 |
-| all | 65 | 56 | 0.286 | 0.750 | 0.415 | 0.692 |
+| out-of-scope | 5 | 5 | 0.800 | 1.000 | 0.800 | 1.000 |
+| all | 65 | 56 | 0.304 | 0.750 | 0.400 | 0.723 |
 
 - **The key** has no opinion: `expected_count` for aggregation, and for every mined question
   the far endpoint of the edge it was templated off — 43 of 47 rows carry one, matched
@@ -530,14 +537,19 @@ correctly downgraded to partial.
 | check | vector-only | graph + vector |
 |---|---|---|
 | A. reproduces the exact count key | 7/8 | 7/8 |
-| B. agrees with the structural key | 44/48 | 47/48 |
-| C. rejects an answer graded against a *different* question | 51/53 | — |
+| B. agrees with the structural key | 46/48 | 43/48 |
+| C. rejects an answer graded against a *different* question | 53/53 | — |
 
 **C is the one that bites.** A judge that rubber-stamps plausible text passes A and B and
-fails only this. Below 90% rejection, `bench` exits instead of publishing. The two leaks
-(`m034→m036`, `m040→m041`) are adjacent questions from the same template family — *"where do
-the competitors of X's company operate"* twice over — so the control is adversarially hard
-rather than random, and those two are where it should leak.
+fails only this. Below 90% rejection, `bench` exits instead of publishing. It is also
+adversarially hard rather than random: each answer is graded against its *neighbour* in the
+eval set, which is often the same template with a different subject.
+
+B's five hybrid departures are the interesting rows, not the agreement rate. Three are
+**rescues** — the judge accepting a right answer the key rejected on surface form, which is
+why the judge exists. Two are **overrides**, and one of them is `m010`, the Argentina/Uruguay
+error below: the answer names the keyed entity and states something the filing contradicts.
+That is the failure citation validation structurally cannot see.
 
 A is a **sanity check, not an independent measurement**, and is labelled as one: the
 aggregation reference carries the verified count, because the gold chunk is a page of an
@@ -555,26 +567,56 @@ locations of operation — hold. The row stays in the eval set: it is not wrong,
 the graph, and deleting the one question that exposes the gap between the graph and the world
 is exactly the eval-set edit this project keeps refusing to make.
 
+### The benchmark found a real bug, and the fix is in these numbers
+
+The first run of this benchmark scored 2-hop at 0.500, and the judge's reasons said why:
+*"who competes with the customers that Teradyne supplies?"* was answered with **Teradyne's
+own competitors**. The traversal had walked the chain correctly. `verbalise()` then flattened
+it into twenty unordered sentences with nothing marking which edge was the last step, and
+chain position is not recoverable from a pile of true facts.
+
+Two lines of the same fix. A walk now renders whole —
+
+```
+GRAPH FACTS (derived from the knowledge graph)
+[8f21…] [400380d68481bb05] TERADYNE, INC supplies Marvell Technology, Inc.
+        → Marvell Technology, Inc. competes with NVIDIA CORP
+```
+
+— and `FACT_LIMIT` counts walks rather than edges. The second half mattered as much as the
+first: walks arrive ranked by summed support, the last hop of a chain is the least
+corroborated thing in it, so the edge that answers the question was the first one the cap
+dropped.
+
+| | before | after |
+|---|---|---|
+| 2-hop | 0.500 | **0.800** |
+| 3-hop | 0.417 | 0.417 |
+| 1-hop | 0.767 | 0.733 |
+| all | 0.692 | **0.723** |
+
+**Both changes have a mechanism behind them, not a score.** 3-hop did not move at all, and the
+1-hop dip is one question — inside the noise the interval above describes. Nothing was tuned
+by watching these 65 questions move, because a benchmark fitted to its own eval set is not
+evidence of anything.
+
 ### What the graph arm still gets wrong
 
-The instrument that scores the benchmark also names the failures, and they sort into three
-shapes:
-
-- **Chains answered at the wrong end.** *"Who competes with the customers that Teradyne
-  supplies?"* returned Teradyne's own competitors. The traversal walked the chain correctly;
-  `verbalise()` then flattened it into 20 unordered sentences with no marking of which edge is
-  the terminal hop, and the model cannot recover chain position from that. This is the largest
-  remaining fixable defect and it is a rendering bug, not a retrieval one.
 - **Seven refusals on answerable questions**, the honest kind: the traversal reached the
-  entity and the terminal hop's evidence was not in the top-10 passages.
+  entity and the terminal hop's evidence was not among the top-10 passages. Fetching text for
+  the entity at the *end* of the chain rather than the one named in the question is the
+  obvious next move.
+- **Four questions the eval set cannot grade** (`unverifiable`) — the gold chunks do not
+  contain the fact asked for, so no verdict is possible either way. That is a published limit
+  on these 65 questions, not a system failure.
 - **One extraction error the judge caught that citation validation never could.** *"Allegro
-  MicroSystems Argentina S.A. is incorporated in Argentina and Uruguay"* — correctly cited,
-  and the filing says Uruguay. The graph inferred a jurisdiction from a company's name.
+  MicroSystems Argentina S.A. is incorporated in Argentina"* — correctly cited, and the filing
+  says Uruguay. The graph inferred a jurisdiction from a company's name.
 
-The last one is the phase's real lesson. **A correctly-cited answer can still be wrong.**
-Citation validation is a guarantee about provenance and says nothing about relevance or
-truth; 319 citations resolved, zero invented, and the system still published a jurisdiction
-it inferred from a name.
+That last one is the phase's real lesson. **A correctly-cited answer can still be wrong.**
+Citation validation is a guarantee about provenance and says nothing about relevance or truth:
+319 citations resolved, zero invented, and the system still published a jurisdiction it had
+inferred from a name.
 
 ## What broke
 

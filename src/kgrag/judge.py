@@ -341,6 +341,7 @@ def run(model: str = answer_mod.SYNTH_MODEL, use_cache: bool = True) -> None:
 
         _validate(questions, arms, keyed, judged, conn, model, use_cache)
         _accuracy(questions, keyed, judged)
+        _significance(questions, judged)
         _cost(arms)
         _markdown(questions, judged, keyed)
         _misses(questions, arms, judged, reasons)
@@ -460,6 +461,48 @@ def _accuracy(
         "  contain the fact asked for, so no verdict is possible. It counts against both\n"
         "  arms identically, which keeps the delta honest while the rate itself is a\n"
         "  published limit on what these 65 questions can measure."
+    )
+
+
+def _significance(
+    questions: list[dict[str, Any]], judged: dict[str, list[str]], trials: int = 10_000
+) -> None:
+    """Is the delta real, or is 65 questions too few to tell?
+
+    Phase 2 answered exactly this question about embedding widths with a paired bootstrap
+    and published the interval rather than the point estimate. The same discipline applies
+    here, and more urgently: the per-slice n is 5 to 30, so a slice can move by a tenth
+    because one question flipped. Paired because both arms answer the same questions, which
+    removes question difficulty as a source of variance.
+
+    A wide interval is not a failure to report. It is the honest width of what 65 questions
+    can resolve, and quoting a three-decimal delta without it would be the overclaim this
+    whole benchmark exists to avoid.
+    """
+    import random
+
+    labels = [label for label, _ in ARMS]
+    rng = random.Random(0)  # fixed seed: a published interval must be reproducible
+    print("\n" + "-" * 74)
+    print("is the delta real? paired bootstrap on per-question correctness, 95% CI")
+    print("-" * 74)
+    for name, idx in [*_slices(questions), ("all", list(range(len(questions))))]:
+        if not idx:
+            continue
+        diffs = [
+            int(judged[labels[1]][i] == CORRECT) - int(judged[labels[0]][i] == CORRECT)
+            for i in idx
+        ]
+        n = len(diffs)
+        boots = sorted(
+            sum(diffs[rng.randrange(n)] for _ in range(n)) / n for _ in range(trials)
+        )
+        lo, hi = boots[int(trials * 0.025)], boots[int(trials * 0.975)]
+        verdict = "significant" if (lo > 0 or hi < 0) else "within noise"
+        print(f"  {name:14} {n:>3} {sum(diffs) / n:+.3f}  [{lo:+.3f}, {hi:+.3f}]  {verdict}")
+    print(
+        "\n  Slices of 5-12 questions cannot resolve a small difference, and the intervals\n"
+        "  say so. Read the individual slice deltas as direction; read 'all' as the result."
     )
 
 
