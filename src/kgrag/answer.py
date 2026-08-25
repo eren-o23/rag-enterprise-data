@@ -495,6 +495,7 @@ def answer(
     """
     start = time.perf_counter()
     before = fireworks.METER.usd
+    paced_before = fireworks.METER.paced_ms
 
     if graph:
         row = route_mod.route(question, session, conn, index, model=router_model, qid=qid,
@@ -557,7 +558,16 @@ def answer(
         "reformatted": reformatted,
         "attempts": attempts,
         "retrieved_ids": sorted(valid_ids),
-        "latency_ms": round((time.perf_counter() - start) * 1000, 1),
+        # Rate-limit sleep is excluded, and reported beside it. `_pace()` holds this
+        # process to 9 requests/minute against a $0 account's 10 RPM quota, which is
+        # 6,667 ms per model call -- more than the call itself. Left in, a sweep reports
+        # the quota: three different configurations of this system all measured a p50
+        # within 30 ms of the pacer floor, and the graph arm looked "2x slower" purely
+        # because it makes two calls where the baseline makes one. Fourth time this
+        # project has measured its own machinery instead of its system.
+        "latency_ms": round((time.perf_counter() - start) * 1000
+                            - (fireworks.METER.paced_ms - paced_before), 1),
+        "paced_ms": round(fireworks.METER.paced_ms - paced_before, 1),
         "usd": round(fireworks.METER.usd - before, 6),
     }
     if log:

@@ -603,6 +603,7 @@ def route(
     """
     start = time.perf_counter()
     before = fireworks.METER.usd
+    paced_before = fireworks.METER.paced_ms
 
     plan, router_error = make_plan(question, model, use_cache=use_cache)
     node_ids = [
@@ -666,7 +667,10 @@ def route(
         "measure_all": measure_all,
         "n_graph": len(graph_ids),
         "n_vector": len(vector_ids),
-        "latency_ms": round((time.perf_counter() - start) * 1000, 1),
+        # Excludes rate-limit sleep, which is the quota's number and not the router's.
+        "latency_ms": round((time.perf_counter() - start) * 1000
+                            - (fireworks.METER.paced_ms - paced_before), 1),
+        "paced_ms": round(fireworks.METER.paced_ms - paced_before, 1),
         "usd": round(fireworks.METER.usd - before, 6),
     }
     if log:

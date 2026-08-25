@@ -67,6 +67,13 @@ def _pace() -> None:
     interval = 60.0 / REQUESTS_PER_MINUTE
     wait = _last_call + interval - time.monotonic()
     if wait > 0:
+        # Recorded, because it is not latency. This sleep is a property of a $0 Fireworks
+        # account's 10 RPM quota, not of the system being measured, and at 9 RPM it is
+        # 6,667 ms per call -- which is larger than the model call it precedes. Phase 5's
+        # first latency table was 13,362 ms p50 for two calls and 6,823 for one, i.e. the
+        # pacer to within 30 ms, and it was published as "the graph arm is 2x slower".
+        # Callers subtract this from what they report. See `answer.answer`.
+        METER.paced_ms += wait * 1000
         time.sleep(wait)
     _last_call = time.monotonic()
 
@@ -98,6 +105,9 @@ class Meter:
     limit_usd: float = 5.0
     calls: int = 0
     cached: int = 0
+    #: Milliseconds spent asleep in `_pace()`. Rate-limit waiting, not system latency --
+    #: subtracted by callers that report a latency number.
+    paced_ms: float = 0.0
     tokens: dict[str, list[int]] = field(default_factory=dict)
 
     def record(self, model: str, prompt_tokens: int, completion_tokens: int) -> None:

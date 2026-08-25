@@ -977,3 +977,28 @@ def test_reasoning_effort_is_in_the_cache_key_but_only_when_set():
     # synth_sha carries it too, so the two runs cannot resume each other's rows.
     assert synth_sha(True) == synth_sha(True, reasoning=None)
     assert synth_sha(True, reasoning="low") != synth_sha(True)
+
+
+def test_reported_latency_excludes_rate_limit_sleep(monkeypatch):
+    """`_pace()` holds this process to 9 requests/minute against a free account's 10 RPM
+    quota -- 6,667 ms per call, more than the model call it precedes. Counted as latency,
+    a sweep reports the quota: three different configurations of this system measured a p50
+    within 30 ms of the pacer floor, and the graph arm read as "2x slower" purely because it
+    makes two calls where the baseline makes one."""
+    from kgrag import answer as answer_mod
+    from kgrag import fireworks
+
+    def slow_call(**kwargs):
+        fireworks.METER.paced_ms += 6_667  # what a paced call adds
+        return {"answerable": True, "refusal_reason": "",
+                "claims": [{"text": "t", "citations": ["c1"]}]}
+
+    monkeypatch.setattr(answer_mod.fireworks, "chat_json", slow_call)
+    monkeypatch.setattr(answer_mod.route_mod, "vector_path", lambda *a, **k: ["c1"])
+    monkeypatch.setattr(answer_mod, "passages", lambda conn, ids: [
+        {"chunk_id": "c1", "company": "C", "form": "10-K", "section_path": "1",
+         "filing_date": "2025-01-01", "text": "text"}])
+
+    row = answer_mod.answer("q", None, None, {}, graph=False, log=False)
+    assert row["paced_ms"] == 6_667, "the sleep is recorded, not discarded"
+    assert row["latency_ms"] < 1_000, "and it is not reported as latency"
