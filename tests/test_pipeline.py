@@ -958,3 +958,22 @@ def test_a_streamed_call_and_a_plain_one_share_one_cache_entry(monkeypatch, tmp_
 
     streamed = "".join(fireworks.chat_stream(**args))
     assert _json.loads(streamed) == fireworks.chat_json(**args)
+
+
+def test_reasoning_effort_is_in_the_cache_key_but_only_when_set():
+    """A low-effort answer is a different answer. If the key ignored the setting, the
+    experiment would be served the default-effort answers back off disk and would report
+    that reasoning effort changes nothing -- at $0.00, instantly, and wrongly. And it must
+    be absent from the key when unset, or every cache entry written before this parameter
+    existed is orphaned. Same asymmetry as `dimensions` in _embed_key."""
+    from kgrag.fireworks import _chat_key
+    from kgrag.answer import synth_sha
+
+    args = ("model", "sys", "usr", {"type": "object"})
+    assert _chat_key(*args, None) == _chat_key(*args, None)
+    assert _chat_key(*args, "low") != _chat_key(*args, None)
+    assert _chat_key(*args, "low") != _chat_key(*args, "high")
+
+    # synth_sha carries it too, so the two runs cannot resume each other's rows.
+    assert synth_sha(True) == synth_sha(True, reasoning=None)
+    assert synth_sha(True, reasoning="low") != synth_sha(True)

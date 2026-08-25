@@ -153,6 +153,23 @@ def _cache_path(key: str) -> Any:
     return path
 
 
+def _chat_key(
+    model: str, system: str, user: str, schema: dict[str, Any], reasoning_effort: str | None
+) -> str:
+    """The cache key both chat paths use.
+
+    `reasoning_effort` is appended only when set, so every entry written before this
+    parameter existed still hashes identically and stays valid -- the same asymmetry
+    `_embed_key` keeps for `dimensions`, and `synth_sha` for the passage budget. It MUST be
+    in the key when set: a low-effort answer is a different answer, and serving one back for
+    a default-effort request would make the experiment measure the filesystem.
+    """
+    material = [model, PROMPT_VERSION, system, user, schema]
+    if reasoning_effort:
+        material.append(f"reasoning={reasoning_effort}")
+    return hashlib.sha256(json.dumps(material, sort_keys=True).encode()).hexdigest()
+
+
 def chat_json(
     *,
     system: str,
@@ -164,6 +181,7 @@ def chat_json(
     use_cache: bool = True,
     timeout: float = DEFAULT_TIMEOUT,
     attempts: int = 6,
+    reasoning_effort: str | None = None,
 ) -> dict[str, Any]:
     """One constrained-decoding call, cached by content.
 
@@ -172,9 +190,7 @@ def chat_json(
     off-ontology value — the guarantee the whole ontology design rests on. Returns
     parsed JSON; the caller validates semantics.
     """
-    key = hashlib.sha256(
-        json.dumps([model, PROMPT_VERSION, system, user, schema], sort_keys=True).encode()
-    ).hexdigest()
+    key = _chat_key(model, system, user, schema, reasoning_effort)
     path = _cache_path(key)
     # `kgrag bakeoff` sets use_cache=False. The production corpus was extracted with
     # EXTRACT_MODEL, so every gold chunk is already cached under that model's key — a
@@ -186,12 +202,14 @@ def chat_json(
 
     # timeout and attempts are deliberately NOT in the cache key above: they describe how
     # hard to try, not what was asked, and the same question must hash the same either way.
+    extra = {"reasoning_effort": reasoning_effort} if reasoning_effort else {}
     response = _with_backoff(
         lambda: client(base_url, timeout).chat.completions.create(
             model=model,
             temperature=temperature,
             messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
             response_format={"type": "json_schema", "json_schema": {"name": "extraction", "schema": schema}},
+            **extra,
         ),
         attempts=attempts,
     )
@@ -214,6 +232,7 @@ def chat_stream(
     use_cache: bool = True,
     timeout: float = DEFAULT_TIMEOUT,
     attempts: int = 6,
+    reasoning_effort: str | None = None,
 ) -> Iterator[str]:
     """`chat_json` with the tokens handed over as they arrive. Same cache, same key.
 
@@ -231,9 +250,7 @@ def chat_stream(
     would replay tokens the caller has already published. Answers are short enough that this
     has not happened; if it starts to, the fix is a retry that buffers rather than yields.
     """
-    key = hashlib.sha256(
-        json.dumps([model, PROMPT_VERSION, system, user, schema], sort_keys=True).encode()
-    ).hexdigest()
+    key = _chat_key(model, system, user, schema, reasoning_effort)
     path = _cache_path(key)
     if use_cache and path.exists():
         METER.cached += 1
@@ -248,6 +265,7 @@ def chat_stream(
             response_format={"type": "json_schema", "json_schema": {"name": "extraction", "schema": schema}},
             stream=True,
             stream_options={"include_usage": True},
+            **({"reasoning_effort": reasoning_effort} if reasoning_effort else {}),
         ),
         attempts=attempts,
     )

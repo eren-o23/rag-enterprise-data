@@ -253,7 +253,8 @@ ARMS = (("vector-only", False), ("graph + vector", True))
 CORRECT = "correct"
 
 
-def _rows(model: str, graph: bool, passage_limit: int | None = None) -> dict[str, dict[str, Any]]:
+def _rows(model: str, graph: bool, passage_limit: int | None = None,
+          reasoning: str | None = None) -> dict[str, dict[str, Any]]:
     """The current system's answers for one arm, straight out of `answer.py`'s own reader.
 
     `_prior` already enforces everything a benchmark needs: right model, right arm, written
@@ -265,7 +266,9 @@ def _rows(model: str, graph: bool, passage_limit: int | None = None) -> dict[str
     # stays at the default so it remains the fixed reference every variant is measured
     # against. Passing the limit to both would move the comparison and the thing compared.
     limit = passage_limit if (passage_limit and graph) else answer_mod.PASSAGE_LIMIT
-    return answer_mod._prior(model, constrain=True, graph=graph, passage_limit=limit)
+    effort = reasoning if graph else None
+    return answer_mod._prior(model, constrain=True, graph=graph, passage_limit=limit,
+                             reasoning=effort)
 
 
 def _verdict(
@@ -305,16 +308,18 @@ def _slices(questions: list[dict[str, Any]]) -> list[tuple[str, list[int]]]:
 
 
 def run(model: str = answer_mod.SYNTH_MODEL, use_cache: bool = True,
-        passage_limit: int | None = None) -> None:
+        passage_limit: int | None = None, reasoning: str | None = None) -> None:
     questions = list(jsonl.read(QUESTIONS))
     index = entity_index()
-    arms = {label: _rows(model, graph, passage_limit) for label, graph in ARMS}
+    arms = {label: _rows(model, graph, passage_limit, reasoning) for label, graph in ARMS}
     for (label, graph), rows in zip(ARMS, arms.values()):
         missing = [q["qid"] for q in questions if q["qid"] not in rows]
         if missing:
             flag = "--constrained" if graph else "--baseline"
             if graph and passage_limit:
                 flag += f" --passages {passage_limit}"
+            if graph and reasoning:
+                flag += f" --reasoning {reasoning}"
             raise SystemExit(
                 f"{label}: {len(missing)} of {len(questions)} questions have no current "
                 f"answer ({', '.join(missing[:5])}...).\n"
@@ -324,6 +329,7 @@ def run(model: str = answer_mod.SYNTH_MODEL, use_cache: bool = True,
 
     print("=" * 74)
     variant = f", graph arm at {passage_limit} passages" if passage_limit else ""
+    variant += f", reasoning_effort={reasoning}" if reasoning else ""
     print(f"benchmark — {len(questions)} questions, vector-only vs graph + vector{variant}")
     print("=" * 74)
     print(

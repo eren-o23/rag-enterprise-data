@@ -49,6 +49,13 @@ def main() -> None:
         "invented citation cannot be generated (default: validate and regenerate)",
     )
     parser.add_argument(
+        "--reasoning",
+        choices=("low", "medium", "high"),
+        default=None,
+        help="answer/bench: synthesiser reasoning effort. gpt-oss-120b spends ~73%% of a "
+        "call reasoning before it writes; 'low' cuts that. Own synth_sha and cache key",
+    )
+    parser.add_argument(
         "--stream",
         action="store_true",
         help="answer --question: publish each claim as it is written, and report "
@@ -135,6 +142,7 @@ def main() -> None:
                 baseline=args.baseline,
                 passage_limit=args.passages or answer_mod.PASSAGE_LIMIT,
                 stream_out=args.stream,
+                reasoning=args.reasoning,
             )
         except fireworks.BudgetExceeded as exc:
             raise SystemExit(f"\nBUDGET STOP: {exc}") from exc
@@ -146,7 +154,8 @@ def main() -> None:
         from . import judge
 
         try:
-            judge.run(use_cache=not args.no_cache, passage_limit=args.passages)
+            judge.run(use_cache=not args.no_cache, passage_limit=args.passages,
+                      reasoning=args.reasoning)
         except fireworks.BudgetExceeded as exc:
             raise SystemExit(f"\nBUDGET STOP: {exc}") from exc
         finally:

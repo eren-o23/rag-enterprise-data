@@ -154,7 +154,8 @@ def _schema(valid_ids: list[str], constrain: bool) -> dict[str, Any]:
     return schema
 
 
-def synth_sha(constrain: bool, passage_limit: int = PASSAGE_LIMIT) -> str:
+def synth_sha(constrain: bool, passage_limit: int = PASSAGE_LIMIT,
+              reasoning: str | None = None) -> str:
     """Fingerprint of everything that decides how an answer is produced.
 
     Same job as `route.router_sha`, and for the same reason: the eval resumes from its own
@@ -169,6 +170,8 @@ def synth_sha(constrain: bool, passage_limit: int = PASSAGE_LIMIT) -> str:
     # keeps the same asymmetry for `dimensions`, and for the same reason.
     if passage_limit != PASSAGE_LIMIT:
         material += f"|passages={passage_limit}"
+    if reasoning:
+        material += f"|reasoning={reasoning}"
     return hashlib.sha256(material.encode()).hexdigest()[:12]
 
 
@@ -313,6 +316,7 @@ def synthesise(
     model: str = SYNTH_MODEL,
     constrain: bool = False,
     use_cache: bool = True,
+    reasoning: str | None = None,
 ) -> tuple[Answer, int, list[str], int]:
     """Generate, validate, regenerate on a miss. Returns (answer, attempts, invented, reformatted).
 
@@ -331,7 +335,7 @@ def synthesise(
             payload = fireworks.chat_json(
                 system=SYSTEM, user=_user(question, context, rejected), schema=schema,
                 model=model, timeout=SYNTH_TIMEOUT, attempts=SYNTH_ATTEMPTS,
-                use_cache=use_cache,
+                use_cache=use_cache, reasoning_effort=reasoning,
             )
         except (APIStatusError, APIConnectionError) as exc:
             return _refusal(f"synthesiser_unreachable:{type(exc).__name__}"), attempts, rejected, reformatted
@@ -472,6 +476,7 @@ def answer(
     log: bool = True,
     graph: bool = True,
     passage_limit: int = PASSAGE_LIMIT,
+    reasoning: str | None = None,
 ) -> dict[str, Any]:
     """Route, assemble, synthesise, validate. Returns the log row.
 
@@ -526,7 +531,7 @@ def answer(
         )
     else:
         ans, attempts, bad, reformatted = synthesise(
-            question, context, valid_ids, model, constrain, use_cache
+            question, context, valid_ids, model, constrain, use_cache, reasoning
         )
 
     cited = sorted({c for claim in ans.claims for c in claim.citations})
@@ -536,7 +541,8 @@ def answer(
         "question": question,
         "model": model,
         "arm": arm_of(constrain, graph),
-        "synth_sha": synth_sha(constrain, passage_limit),
+        "synth_sha": synth_sha(constrain, passage_limit, reasoning),
+        "reasoning": reasoning,
         "route": row["route"],
         "fallback": fallback,
         "n_facts": len(facts),
@@ -611,6 +617,7 @@ def run(
     baseline: bool = False,
     passage_limit: int = PASSAGE_LIMIT,
     stream_out: bool = False,
+    reasoning: str | None = None,
 ) -> None:
     # The baseline runs constrained, because that is what the hybrid arm runs. Comparing a
     # constrained system against a free one would put the enforcement question and the
@@ -628,11 +635,11 @@ def run(
             _print_one(answer(
                 question, session, conn, index,
                 model=model, constrain=constrained, use_cache=use_cache, graph=not baseline,
-                passage_limit=passage_limit,
+                passage_limit=passage_limit, reasoning=reasoning,
             ))
             return
         _eval(session, conn, index, model, constrained, fresh, use_cache, not baseline,
-              passage_limit)
+              passage_limit, reasoning)
 
 
 def _print_one(row: dict[str, Any]) -> None:
@@ -656,7 +663,8 @@ def _print_one(row: dict[str, Any]) -> None:
 
 
 def _prior(model: str, constrain: bool, graph: bool = True,
-           passage_limit: int = PASSAGE_LIMIT) -> dict[str, dict[str, Any]]:
+           passage_limit: int = PASSAGE_LIMIT,
+           reasoning: str | None = None) -> dict[str, dict[str, Any]]:
     """qid -> the last logged answer for this model and arm. Same rules as `route._prior`.
 
     Rows written by a different prompt, schema or arm are not resumable, and neither is a
@@ -665,7 +673,7 @@ def _prior(model: str, constrain: bool, graph: bool = True,
     able to fail.
     """
     prior: dict[str, dict[str, Any]] = {}
-    sha = synth_sha(constrain, passage_limit)
+    sha = synth_sha(constrain, passage_limit, reasoning)
     arm = arm_of(constrain, graph)
     for row in jsonl.read(ANSWER_LOG):
         if not row.get("qid") or row.get("model") != model:
@@ -698,6 +706,7 @@ def _eval(
     use_cache: bool = True,
     graph: bool = True,
     passage_limit: int = PASSAGE_LIMIT,
+    reasoning: str | None = None,
 ) -> None:
     questions = list(jsonl.read(QUESTIONS))
     if not questions:
@@ -716,14 +725,14 @@ def _eval(
     )
 
     before = fireworks.METER.usd
-    prior = {} if fresh else _prior(model, constrain, graph, passage_limit)
+    prior = {} if fresh else _prior(model, constrain, graph, passage_limit, reasoning)
     rows: list[dict[str, Any]] = []
     for q in questions:
         done = prior.get(q["qid"])
         rows.append(done if done else answer(
             q["question"], session, conn, index,
             model=model, constrain=constrain, use_cache=use_cache, qid=q["qid"], graph=graph,
-            passage_limit=passage_limit,
+            passage_limit=passage_limit, reasoning=reasoning,
         ))
     spend = fireworks.METER.usd - before
     resumed = sum(1 for q in questions if q["qid"] in prior)
