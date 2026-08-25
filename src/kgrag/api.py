@@ -66,7 +66,7 @@ def health() -> dict[str, Any]:
             nodes = session.run("MATCH (e:Entity) RETURN count(e) AS n").single()["n"]
         with connect() as conn:
             chunks = conn.execute("SELECT count(*) FROM chunks").fetchone()[0]
-    except Exception as exc:  # noqa: BLE001 — the endpoint's whole job is to report this
+    except Exception as exc:
         raise HTTPException(503, f"{type(exc).__name__}: {exc}") from exc
     return {"status": "ok", "entities": nodes, "chunks": chunks,
             "aliases": len(STATE["index"])}
@@ -84,7 +84,7 @@ def ask(body: Ask) -> dict[str, Any]:
             row = answer_mod.answer(
                 body.question, session, conn, STATE["index"], constrain=body.constrained
             )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise HTTPException(503, f"{type(exc).__name__}: {exc}") from exc
 
     return {

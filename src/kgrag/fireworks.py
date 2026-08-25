@@ -78,7 +78,7 @@ def _pace() -> None:
     _last_call = time.monotonic()
 
 
-def _with_backoff(call: Callable[[], T], attempts: int = 6) -> T:
+def _with_backoff[T](call: Callable[[], T], attempts: int = 6) -> T:
     for attempt in range(attempts):
         _pace()
         try:
@@ -344,7 +344,11 @@ def embed(
     for start in range(0, len(todo), batch):
         idxs = todo[start : start + batch]
         response = _with_backoff(
-            lambda: api.embeddings.create(model=model, input=[texts[i] for i in idxs], **extra)
+            # idxs bound as a default: a late-bound closure over a loop variable is the
+            # classic way to embed the wrong batch when anything defers the call.
+            lambda idxs=idxs: api.embeddings.create(
+                model=model, input=[texts[i] for i in idxs], **extra
+            )
         )
         METER.record(model, response.usage.total_tokens, 0)
         for i, item in zip(idxs, response.data):

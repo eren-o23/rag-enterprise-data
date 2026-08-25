@@ -30,7 +30,8 @@ from __future__ import annotations
 
 import re
 from collections import Counter, defaultdict
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any
 
 import numpy as np
 
@@ -49,26 +50,18 @@ MIN_ACRONYM = 2
 #: "Skyworks Solutions, Inc." and "Skyworks Solutions Oy" are a US parent and its Finnish
 #: subsidiary, and Exhibit 21 lists them precisely because they are different entities.
 FOREIGN_LEGAL_FORMS = frozenset(
-    "oy oyj ab as aps sas spa srl sarl pte sdn bhd kk gk kft doo bv ug kg cv lda ltda "
-    "pty pt zoo sro sl unipersonal".split()
+    ["oy", "oyj", "ab", "as", "aps", "sas", "spa", "srl", "sarl", "pte", "sdn", "bhd", "kk", "gk", "kft", "doo", "bv", "ug", "kg", "cv", "lda", "ltda", "pty", "pt", "zoo", "sro", "sl", "unipersonal"]
 )
 
 #: Place words too generic to imply a separate entity on their own.
-GEO_STOPWORDS = frozenset("the of and new north south east west central".split())
+GEO_STOPWORDS = frozenset(["the", "of", "and", "new", "north", "south", "east", "west", "central"])
 
 #: The geography half of `entity_markers()` is derived from the corpus, which means it is
 #: empty on a fresh clone before `kgrag extract` has run. This floor keeps the rule
 #: working anyway: without it the parent/subsidiary block would silently degrade to
 #: nothing and quietly reintroduce the self-loop bug it exists to prevent.
 GEO_CORE = frozenset(
-    "america american argentina asia australia austria belgium bermuda brasil brazil "
-    "britain canada cayman chengdu chile china colombia czech denmark deutschland dublin "
-    "egypt emea england europe european finland france french german germany greece "
-    "holland hongkong hungary iberia india indonesia ireland israel italia italy japan "
-    "kong korea luxembourg malaysia malta mexico nederland netherlands nordic norway "
-    "pacific philippines poland portugal prc romania russia scotland shanghai shenzhen "
-    "singapore slovakia slovenia spain suisse sweden swiss switzerland taiwan thailand "
-    "turkey uk ukraine vietnam wales".split()
+    ["america", "american", "argentina", "asia", "australia", "austria", "belgium", "bermuda", "brasil", "brazil", "britain", "canada", "cayman", "chengdu", "chile", "china", "colombia", "czech", "denmark", "deutschland", "dublin", "egypt", "emea", "england", "europe", "european", "finland", "france", "french", "german", "germany", "greece", "holland", "hongkong", "hungary", "iberia", "india", "indonesia", "ireland", "israel", "italia", "italy", "japan", "kong", "korea", "luxembourg", "malaysia", "malta", "mexico", "nederland", "netherlands", "nordic", "norway", "pacific", "philippines", "poland", "portugal", "prc", "romania", "russia", "scotland", "shanghai", "shenzhen", "singapore", "slovakia", "slovenia", "spain", "suisse", "sweden", "swiss", "switzerland", "taiwan", "thailand", "turkey", "uk", "ukraine", "vietnam", "wales"]
 )
 
 #: Legal form only. It is tempting to also strip industry words - "technology",
@@ -203,9 +196,12 @@ def matches(
     # Semiconductor Manufacturing, so a place word is exactly what separates the pair,
     # and blocking on it would reject the one rule that gets this right.
     for x, y in ((a, b), (b, a)):
-        if len(x["norm"]) >= MIN_ACRONYM and " " not in x["norm"]:
-            if acronym(y["norm"]) == x["norm"] or raw_acronym(y["surface"]) == x["norm"]:
-                return "acronym"
+        if (
+            len(x["norm"]) >= MIN_ACRONYM
+            and " " not in x["norm"]
+            and (acronym(y["norm"]) == x["norm"] or raw_acronym(y["surface"]) == x["norm"])
+        ):
+            return "acronym"
 
     if (a["tokens"] ^ b["tokens"]) & entity_markers():
         return None

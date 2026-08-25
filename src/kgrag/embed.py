@@ -176,7 +176,7 @@ def _embed_width(
         conn.commit()
         done += len(group)
         if done % (BATCH * 8) == 0 or done == len(pending):
-            now = dt.datetime.now().strftime("%H:%M:%S")
+            now = dt.datetime.now().strftime("%H:%M:%S")  # noqa: DTZ005 — local wall clock, for a human watching a long run
             print(f"  [{now}] {done}/{len(pending)}  ${fireworks.METER.usd:.3f}")
 
 

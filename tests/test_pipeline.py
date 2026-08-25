@@ -279,7 +279,7 @@ def test_canonical_id_is_stable_when_cluster_frequency_shifts():
 
 def test_load_is_idempotent():
     """The Phase 1 acceptance test: re-running ingestion must not grow the graph."""
-    neo4j = pytest.importorskip("neo4j")
+    pytest.importorskip("neo4j")
     from kgrag import load
 
     try:
@@ -433,7 +433,8 @@ def test_routing_log_resume_takes_the_latest_row_per_model(tmp_path, monkeypatch
     history rather than replaying it. Getting this backwards would silently serve stale
     numbers after a ranking change -- the same shape of failure as an eval that cannot
     fail, which this project has already shipped once."""
-    from kgrag import jsonl, route as route_mod
+    from kgrag import jsonl
+    from kgrag import route as route_mod
 
     log = tmp_path / "routing_log.jsonl"
     sha = route_mod.router_sha()
@@ -460,7 +461,8 @@ def test_routing_log_never_resumes_over_a_router_timeout(tmp_path, monkeypatch):
     """A timed-out router call recorded a fallback, not a decision. Resuming over it would
     freeze a transient Fireworks stall into the published numbers -- and chat_json only
     caches successes, so the retry is available and cannot return a stale answer."""
-    from kgrag import jsonl, route as route_mod
+    from kgrag import jsonl
+    from kgrag import route as route_mod
 
     log = tmp_path / "routing_log.jsonl"
     sha = route_mod.router_sha()
@@ -966,8 +968,8 @@ def test_reasoning_effort_is_in_the_cache_key_but_only_when_set():
     that reasoning effort changes nothing -- at $0.00, instantly, and wrongly. And it must
     be absent from the key when unset, or every cache entry written before this parameter
     existed is orphaned. Same asymmetry as `dimensions` in _embed_key."""
-    from kgrag.fireworks import _chat_key
     from kgrag.answer import synth_sha
+    from kgrag.fireworks import _chat_key
 
     args = ("model", "sys", "usr", {"type": "object"})
     assert _chat_key(*args, None) == _chat_key(*args, None)

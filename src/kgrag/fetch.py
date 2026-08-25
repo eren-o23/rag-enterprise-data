@@ -13,7 +13,8 @@ thereafter, so the graph is rebuildable from the same documents forever.
 from __future__ import annotations
 
 import re
-from typing import Any, Iterator
+from collections.abc import Iterator
+from typing import Any
 
 from edgar import Company, set_identity
 
@@ -93,9 +94,8 @@ def _sections(filing, ticker: str) -> Iterator[dict[str, Any]]:
     elif form == "8-K":
         obj = filing.obj()
         for item in getattr(obj, "items", []) or []:
-            if item in EIGHTK_ITEMS:
-                if doc := _doc(filing, f"8-K/{item}", obj[item], ticker):
-                    yield doc
+            if item in EIGHTK_ITEMS and (doc := _doc(filing, f"8-K/{item}", obj[item], ticker)):
+                yield doc
 
 
 def _pin(ticker: str) -> Iterator[Any]:
@@ -127,7 +127,7 @@ def run(tickers: tuple[str, ...] = UNIVERSE) -> None:
             if accessions := pinned.get(ticker):
                 filings = [f for f in filings if f.accession_no in accessions]
             docs = [d for f in filings for d in _sections(f, ticker)]
-        except Exception as exc:  # one bad filer must not kill a 24-company run
+        except Exception as exc:  # noqa: BLE001 — one bad filer must not kill a 24-company run
             print(f"{ticker:6} FAILED {type(exc).__name__}: {exc}")
             continue
 

@@ -171,7 +171,7 @@ def run(limit: int | None = None, assume_yes: bool = False, model: str = firewor
             jsonl.append(EXTRACTIONS, [result])
             dropped_total.update(result["dropped"])
         if i % 50 == 0 or i == len(todo):
-            now = dt.datetime.now().strftime("%H:%M:%S")
+            now = dt.datetime.now().strftime("%H:%M:%S")  # noqa: DTZ005 — local wall clock, for a human watching a long run
             print(
                 f"  [{now}] {i}/{len(todo)}  ${fireworks.METER.usd:.3f}  "
                 f"{len(failures)} quarantined  {sum(dropped_total.values())} relations dropped"

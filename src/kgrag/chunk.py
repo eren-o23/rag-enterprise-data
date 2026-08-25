@@ -11,7 +11,8 @@ from __future__ import annotations
 
 import hashlib
 import re
-from typing import Any, Iterator
+from collections.abc import Iterator
+from typing import Any
 
 from . import jsonl
 from .config import CHUNKS, DOCS
