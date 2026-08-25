@@ -13,37 +13,37 @@ quoted (below), with a judgement-free structural key reported alongside it.
 
 | slice | n | vector-only | graph + vector | delta | 95% CI |
 |---|---|---|---|---|---|
-| 1-hop | 30 | 0.633 | **0.733** | +0.100 | [-0.067, +0.267] — parity |
+| 1-hop | 30 | 0.633 | **0.700** | +0.067 | [-0.100, +0.233] — parity |
 | 2-hop | 10 | 0.100 | **0.800** | +0.700 | [+0.400, +1.000] |
 | 3-hop | 12 | 0.083 | **0.417** | +0.333 | [+0.083, +0.583] |
 | aggregation | 8 | 0.125 | **0.750** | +0.625 | [+0.125, +1.000] |
 | out-of-scope (refuse) | 5 | 0.800 | 1.000 | +0.200 | [+0.000, +0.600] |
-| **all** | **65** | **0.400** | **0.708** | **+0.308** | **[+0.169, +0.446]** |
+| **all** | **65** | **0.400** | **0.692** | **+0.292** | **[+0.154, +0.431]** |
 
 | | vector-only | graph + vector |
 |---|---|---|
-| latency p50 | **6,823 ms** | 13,362 ms |
-| latency p95 | **10,658 ms** | 18,894 ms |
-| $ per query | **$0.00144** | $0.00162 |
+| latency p50 | **2,487 ms** | 5,088 ms |
+| latency p95 | **8,688 ms** | 12,301 ms |
+| $ per query | **$0.00145** | $0.00162 |
 | one-time ingestion | **$0.00** | $1.98 |
 
 **Parity at one hop, and a gap that opens with depth.** The 1-hop interval crosses zero, so
-the two systems are indistinguishable there on 30 questions — which is the honest version of
-the result the spec predicts, and a stronger claim than a small unexplained edge. Every
-multi-hop and aggregation interval clears zero: 0.091 → 0.591 across the 22 multi-hop
-questions. That curve is the whole point. Embeddings answer what a passage states and lose
-what a chain implies.
+the two systems are indistinguishable there on 30 questions — the honest version of the
+result the spec predicts, and a stronger claim than a small unexplained edge. Every multi-hop
+and aggregation interval clears zero: **0.091 → 0.591** across the 22 multi-hop questions.
+That curve is the whole point. Embeddings answer what a passage states and lose what a chain
+implies.
 
-**And the graph arm is twice as slow and 13% more expensive per query**, on top of $1.98 to
-build the graph in the first place. It makes two sequential model calls where the baseline
-makes one — the router is ~6.7s of the 13.4s p50, and actual retrieval, graph traversal
-included, is **31 ms**. Nothing here is slow because of the graph; it is slow because
-answering takes two LLM calls.
+**And the graph arm is 2x slower and 12% dearer per query**, on top of $1.98 to build the
+graph. It makes two sequential model calls where the baseline makes one; actual retrieval,
+graph traversal included, is **31 ms**. Nothing here is slow because of the graph.
 
+Latency excludes rate-limit sleep — this account is capped at 10 requests/minute, and leaving
+that in meant publishing the quota rather than the system (see [What broke](#what-broke)).
 Intervals are a paired bootstrap over per-question correctness, 10,000 resamples, fixed seed.
-Slices of 5-12 questions cannot resolve a small difference and say so — and re-running the
-same code end to end moves a slice by about one question, which is the other reason to read
-intervals rather than third decimals.
+Slices of 5-12 questions cannot resolve a small difference, and re-running identical code
+moves a slice by about one question — which is the other reason to read intervals rather than
+third decimals.
 
 ```mermaid
 flowchart LR
@@ -71,7 +71,7 @@ flowchart LR
 | 2 | pgvector index over the same chunks | **complete** — 2,743 chunks × 3 widths, recall measured by hop count |
 | 3 | Question router (graph vs. vector) | **complete** — 95.4% routing accuracy, multi-hop recall 2.5x the vector baseline |
 | 4 | Grounded answer synthesis with validated citations | **complete** — 319 citations, 0 invented; aggregation 8/8 exact |
-| 5 | Benchmark vs. vector-only baseline | **complete** — 0.400 → 0.708 overall, parity at 1-hop, +0.700 at 2-hop, at 2x the latency |
+| 5 | Benchmark vs. vector-only baseline | **complete** — 0.400 → 0.692 overall, parity at 1-hop, +0.700 at 2-hop, at 2x the latency |
 
 ## Phase 1 results
 
@@ -464,67 +464,70 @@ Both arms ran uncached, so latency and cost are measured rather than read back o
 
 | stage | p50 |
 |---|---|
-| router LLM call | ~6,700 ms |
+| router model call | ~2,500 ms |
 | graph traversal + vector search | **31 ms** |
-| synthesis LLM call | ~6,700 ms |
+| synthesis model call | ~2,500 ms |
 
-The graph contributes **0.2% of the latency**. The rest is two language-model calls in
-sequence, and the baseline pays one of them, which is exactly why it is twice as fast.
-Latency tracks *output* length far more than input (r = +0.59 vs +0.18): the tail is
-questions with long answers, not questions with big contexts.
+The graph contributes **0.6% of the latency**. The rest is two language-model calls in
+sequence, and the baseline pays one of them, which is the entire reason it is twice as fast.
 
-That decomposition suggested two fixes. **Both were measured and both were largely wrong**,
-which is why they are written up here rather than shipped as claims.
+**Three attempts to improve this, all measured, none of them a win.** They are here rather
+than in a changelog because the reasons are more useful than the outcomes.
 
-**Streaming the answer buys 0.5-6%, not 90%.** Latency correlates with output length
-(r = +0.59) far more than with input (+0.18), so the obvious read is that the model spends
-its time writing and a user should see the first words in under a second. Measured directly,
-**73% of the synthesis call elapses before the first content token exists**: `gpt-oss-120b`
-is a reasoning model, and the answer is written in 2.9s of an 11.1s call. Output length
-correlates with latency because longer answers need more *reasoning*, not because writing is
-slow. Time to first claim against the complete answer: 9,472 vs 10,099 ms on a five-claim
-answer, 8,296 vs 8,342 ms on a one-claim answer.
+**Streaming buys 0.5-6%, not 90%.** Latency correlates with output length (r = +0.59) far
+more than input (+0.18), which reads as "the model spends its time writing". Measured
+directly, **73% of a synthesis call elapses before the first content token exists**:
+`gpt-oss-120b` reasons before it writes — 1,010 reasoning tokens against ~200 of answer — so
+the content phase is 2.9s of an 11.1s call. Output length correlates with latency *through
+reasoning*, not through typing. Time to first claim vs complete answer: 9,472 / 10,099 ms on
+a five-claim answer, 8,296 / 8,342 ms on a one-claim answer. `POST /ask/stream` ships anyway:
+it is correct architecture for a non-reasoning synthesiser, and building it established that
+**constrained decoding is what makes progressive publication safe at all** — the free arm can
+reject an answer after a user has read half of it.
 
-The endpoint ships anyway (`POST /ask/stream`), because it is the right architecture and it
-costs nothing — but the honest number is a rounding error, and the reason is worth more than
-the feature.
+**Halving the prompt cut cost 19% and latency 1%.** Ten passages at ~36k characters produce a
+137-character answer, so five looked like free latency. It is free *cost* and no latency:
+prefill is not what you are waiting for. Accuracy went 0.708 → 0.677 in the run pair that tested
+it, with 3-hop falling out of significance. Default stays at 10.
 
-**Halving the prompt cut cost 19% and latency 1%.** Ten passages at ~36k characters produce
-a 137-character answer at p50, so five passages looked like free latency. It is free *cost*
-— $0.00162 → $0.00131 — and no latency at all (13,362 → 13,194 ms p50), which is the same
-finding from the other side: the prefill is not what you are waiting for. Accuracy went
-0.708 → 0.677 with 3-hop falling out of significance and refusals rising 6 → 9. The default
-stays at 10; `--passages N` stays as a measurement tool.
+**`reasoning_effort=low` costs accuracy and buys nothing.** 36% fewer output tokens, overall
+0.692 → 0.631, 3-hop 0.417 → 0.250 and out of significance, more `partial` and `unverifiable`
+verdicts. The model stops doing the work that following a chain requires — which is a result
+about *where* the reasoning budget is spent, and a good argument that the multi-hop gap is
+not a prompt artifact.
 
-**What actually moves it: `reasoning_effort`.** On the same question, same answer shape,
-`low` versus `high` is **16,872 ms → 6,125 ms** with reasoning tokens dropping 1,010 → 132.
-That is a 64% cut and it is untested against accuracy — a real experiment, not a setting to
-flip, because it changes every answer and would need the whole benchmark re-run to publish.
+**All three of those experiments were run against a broken clock.** The published latency was
+the rate limiter: `_pace()` holds this process to 9 requests/minute against a free account's
+10 RPM quota, which is 6,667 ms of sleep per model call — larger than the call itself.
 
-What would *not* help, in any version: tuning the index. `ef_search` is not in the critical
-path at all.
+| | pacer floor | first published p50 |
+|---|---|---|
+| graph arm, 2 model calls | 13,333 ms | 13,362 / 13,228 / 13,194 |
+| vector arm, 1 model call | 6,667 ms | 6,823 |
 
-**This table exists because the first version of it was wrong.** Phase 5's latency was
-measured with `kgrag answer --no-cache`, which bypassed the answer cache and left the router
-reading its own — a ~6.7s call served from disk in 16 ms, on the arm being compared against a
-baseline that has no router at all. The flag now reaches every model call a query makes, and
-`test_no_cache_reaches_the_router_not_just_the_synthesiser` fails if it stops doing so. Third
-time this project has timed its own cache; the first two are in the table below.
+Three different configurations landed within 30 ms of the floor, and "the graph arm is 2x
+slower" was an artifact of call *count* under a self-imposed cap. The sleep is now recorded
+on the Meter, subtracted by anything that reports a latency, and logged as `paced_ms` beside
+it so the correction is auditable. The 2x ratio survived the fix — two sequential model calls
+against one — but the absolute numbers halved.
+
+What would not help in any version: tuning the index. `ef_search` is not in the critical path
+at all.
 
 ### Where the baseline actually fails
 
-Not by hallucinating. Vector-only **refuses 29 of 60** answerable questions where the hybrid
-refuses 7, and the refusals are honest: it retrieves ten passages about the right company and
+Not by hallucinating. Vector-only **refuses 28 of 60** answerable questions where the hybrid
+refuses 9, and the refusals are honest: it retrieves ten passages about the right company and
 correctly reports that the fact asked for is not in them. *"The provided passages list many
 AMD subsidiaries"* — and the question asked how many there are.
 
 | judge verdict | vector-only | graph + vector |
 |---|---|---|
-| correct | 26 | **46** |
-| partial | 1 | 2 |
-| incorrect | 7 | 6 |
-| **refused an answerable question** | **29** | **6** |
-| unverifiable (the eval set, not the system) | 2 | 5 |
+| correct | 26 | **45** |
+| partial | 2 | 1 |
+| incorrect | 6 | 5 |
+| **refused an answerable question** | **28** | **9** |
+| unverifiable (the eval set, not the system) | 3 | 5 |
 
 That is the failure mode this project set out to find. A two-hop question names one entity and
 asks about something reached through another, so the passages that answer it never share
@@ -535,12 +538,12 @@ is not a retrieval question.
 
 | slice | n | keyed | key: vector | key: hybrid | judge: vector | judge: hybrid |
 |---|---|---|---|---|---|---|
-| 1-hop | 30 | 23 | 0.565 | 0.739 | 0.633 | 0.733 |
+| 1-hop | 30 | 23 | 0.565 | 0.739 | 0.633 | 0.700 |
 | 2-hop | 10 | 10 | 0.000 | 0.500 | 0.100 | 0.800 |
 | 3-hop | 12 | 10 | 0.000 | 0.500 | 0.083 | 0.417 |
 | aggregation | 8 | 8 | 0.000 | 0.875 | 0.125 | 0.750 |
 | out-of-scope | 5 | 5 | 0.800 | 1.000 | 0.800 | 1.000 |
-| all | 65 | 56 | 0.304 | 0.696 | 0.400 | 0.708 |
+| all | 65 | 56 | 0.304 | 0.696 | 0.400 | 0.692 |
 
 - **The key** has no opinion: `expected_count` for aggregation, and for every mined question
   the far endpoint of the edge it was templated off — 43 of 47 rows carry one, matched
@@ -595,7 +598,7 @@ correctly downgraded to partial.
 |---|---|---|
 | A. reproduces the exact count key | 7/8 | 7/8 |
 | B. agrees with the structural key | 46/48 | 42/48 |
-| C. rejects an answer graded against a *different* question | 54/54 | — |
+| C. rejects an answer graded against a *different* question | 51/51 | — |
 
 **C is the one that bites.** A judge that rubber-stamps plausible text passes A and B and
 fails only this. Below 90% rejection, `bench` exits instead of publishing. It is also
@@ -649,12 +652,14 @@ dropped.
 |---|---|---|
 | 2-hop | 0.500 | **0.800** |
 | 3-hop | 0.417 | 0.417 |
-| 1-hop | 0.767 | 0.733 |
-| all | 0.692 | **0.708** |
+| 1-hop | 0.767 | 0.700 |
+| all | 0.692 | 0.692 |
 
-**Both changes have a mechanism behind them, not a score.** 3-hop did not move at all, and the
-1-hop dip is one question — inside the noise the interval above describes. Nothing was tuned
-by watching these 65 questions move, because a benchmark fitted to its own eval set is not
+**The slice it was aimed at moved; the overall number did not.** 2-hop gained three questions
+of ten. 3-hop did not move at all, 1-hop lost two, and the total landed exactly where it
+started — which is the honest shape of a fix that addresses one failure mode rather than a
+general improvement. Both changes have a mechanism behind them, not a score, and nothing was
+tuned by watching these 65 questions move: a benchmark fitted to its own eval set is not
 evidence of anything.
 
 ### What the graph arm still gets wrong
@@ -700,10 +705,11 @@ reported success.
 | 4 | A p50 of **7 ms** and $0.00003/question | The cost report was timing the cache. Same bug as the Phase 1 bakeoff, second occurrence. |
 | 4 | ~600 "invented" citations per sweep | The id copied with its `[brackets]`. Counting those as invention would have made the arm comparison measure formatting rather than grounding. |
 | 4 | *"AMD operates in 11 countries"* — correctly cited | Two unrelated sets that happen to share a size, neither of them a count of countries. Every mechanism built to catch invented sources reported green. |
+| 5 | Three different system configurations reporting the same p50 | The latency table was measuring `_pace()`, this repo's own 9 RPM rate limiter: 6,667 ms of sleep per model call, larger than the call. "2x slower" was an artifact of call count. Sleep is now recorded and subtracted; the ratio survived, the absolute numbers halved. |
 | 5 | A graph arm apparently *cheaper and no slower* than the baseline | `--no-cache` bypassed the answer cache and left the router reading its own: a ~6.7s call served from disk in 16 ms. Cold, the graph arm is 2x slower and 13% dearer. Third cache-timing bug in the project, now covered by a test. |
 | 5 | A judge disagreeing with the answer key on 19 of 48 answers | The judge was grading against four truncated gold chunks and treating a floor as exhaustive — penalising the arm that retrieves more, on the axis being measured. Twice. |
 
-The recurring shape is worth stating plainly: **a passing run is not evidence.** Five of these
+The recurring shape is worth stating plainly: **a passing run is not evidence.** Six of these
 shipped green — a `verify` that passed while discarding half a relation, an eval that graded
 itself, a resume that replayed a deleted prompt, a benchmark that timed its own cache. What
 caught them was always a second number that should have agreed and did not.

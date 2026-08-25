@@ -1077,3 +1077,50 @@ so a variant run can never resume the default's rows.
 The lever that does move latency is `reasoning_effort`: `low` against `high` on one probe is
 16,872 ms → 6,125 ms, reasoning tokens 1,010 → 132. Untested against accuracy, and therefore
 not adopted — it changes every answer in the benchmark.
+
+## The latency table was measuring this repo's own rate limiter
+
+`_pace()` holds the process to 9 requests/minute, one below a free Fireworks account's 10 RPM
+quota. That is **6,667 ms of sleep per model call** — larger than the call it precedes — and
+it sat inside every latency this project published.
+
+| | pacer floor | measured p50 |
+|---|---|---|
+| graph arm, 2 model calls | 13,333 ms | 13,362 / 13,228 / 13,194 |
+| vector arm, 1 model call | 6,667 ms | 6,823 |
+
+Three different configurations of the system — default, five passages, low reasoning effort —
+all produced a p50 within 30 ms of the floor. The tell was the third one: `reasoning_effort=low`
+cut output tokens by 36% and moved the p50 by 1%, which is not possible unless the clock is
+measuring something else.
+
+"The graph arm is 2x slower" was therefore an artifact of **call count under a self-imposed
+cap**, not of the system. Corrected, the graph arm is 5,088 ms p50 against the baseline's
+2,487 — still 2x, because two sequential model calls against one really is 2x, but at half the
+absolute numbers, and for a reason that is a property of the architecture rather than of the
+account tier.
+
+Sleep is now accumulated on the `Meter`, subtracted by anything that reports a latency, and
+logged as `paced_ms` beside `latency_ms` so the correction is visible rather than assumed.
+Fourth time this project has measured its own machinery: the Phase 1 bakeoff timed cache hits,
+Phase 4's cost report timed cache hits, Phase 5's first latency table timed the router's cache,
+and this one timed the rate limiter. The first was caught by a suspicious number, the last
+three by a test that now exists for each.
+
+## `reasoning_effort=low` is where the multi-hop result comes from
+
+Worth running precisely because it looked like free latency: `low` against `high` on a single
+probe was 16,872 → 6,125 ms with reasoning tokens dropping 1,010 → 132. Over the full 65
+questions it is **0.692 → 0.631 overall, 3-hop 0.417 → 0.250 and out of significance**, with
+`partial` and `unverifiable` verdicts both rising. Cost fell 10%; latency, correctly measured,
+was not the point it appeared to be.
+
+That is a more interesting result than a latency win would have been. The graph hands the model
+the same facts either way — the retrieval is identical, the context is identical — and the
+answer degrades specifically on the slices that require composing several facts into one
+chain. **The multi-hop gap this benchmark reports is not a retrieval artifact that better
+prompting could produce from passages**: even with the right facts in front of it, the model
+has to do work to combine them, and cutting that budget shows up exactly where the work is.
+
+`--reasoning` stays in the CLI as a measurement tool with its negative result recorded, the
+same as `--passages`.

@@ -25,23 +25,21 @@ any of its numbers were quoted:
 
 | slice | n | vector-only | graph + vector | delta | 95% CI |
 |---|---|---|---|---|---|
-| 1-hop | 30 | 0.633 | **0.733** | +0.100 | [-0.067, +0.267] parity |
+| 1-hop | 30 | 0.633 | **0.700** | +0.067 | [-0.100, +0.233] parity |
 | 2-hop | 10 | 0.100 | **0.800** | +0.700 | [+0.400, +1.000] |
 | 3-hop | 12 | 0.083 | **0.417** | +0.333 | [+0.083, +0.583] |
 | aggregation | 8 | 0.125 | **0.750** | +0.625 | [+0.125, +1.000] |
 | out-of-scope | 5 | 0.800 | 1.000 | +0.200 | [+0.000, +0.600] |
-| **all** | 65 | **0.400** | **0.708** | **+0.308** | **[+0.169, +0.446]** |
+| **all** | 65 | **0.400** | **0.692** | **+0.292** | **[+0.154, +0.431]** |
 
 Multi-hop overall: **0.091 → 0.591**. **1-hop parity is measured, not asserted** — the
 interval crosses zero on 30 questions.
 
-**Latency and cost, measured cold** (every model call uncached, including the router):
-p50/p95 **6,823/10,658 ms** (vector) vs **13,362/18,894 ms** (hybrid); **$0.00144 vs
-$0.00162** per query; $1.98 one-time ingestion the baseline does not pay. The graph arm is
-2x slower and 13% dearer because it makes two sequential model calls where the baseline makes
-one — retrieval itself, traversal included, is **31 ms**.
-The graph arm is cheaper per query because the router refuses out-of-scope questions before
-any synthesis call, and slower at the tail because a traversal runs first.
+**Latency and cost, measured cold and with rate-limit sleep excluded**: p50/p95
+**2,487/8,688 ms** (vector) vs **5,088/12,301 ms** (hybrid); **$0.00145 vs $0.00162** per
+query; $1.98 one-time ingestion the baseline does not pay. The graph arm is 2x slower because
+it makes two sequential model calls where the baseline makes one — retrieval itself, traversal
+included, is **31 ms**.
 
 **The baseline's failure mode is refusal, not hallucination**: 29 of 60 answerable questions
 refused (hybrid: 7), honestly, because ten passages about the right company do not contain a
@@ -381,14 +379,21 @@ score-shaped one:
   fitting the eval, and it would cost this benchmark the only thing that makes it worth
   reading.
 
-**Latency, if it is ever worth chasing.** Two candidate fixes were measured and neither is
-one: streaming buys 0.5-6% because 73% of the synthesis call is reasoning before any content
-token exists, and halving the passage budget buys 19% of cost but 1% of latency and costs
-accuracy (0.708 → 0.677, 3-hop out of significance). The lever that works is
-**`reasoning_effort`** — `low` vs `high` on one probe is 16,872 → 6,125 ms with reasoning
-tokens 1,010 → 132. It is untested against accuracy and changes every answer, so adopting it
-means re-running the whole benchmark (~$0.20, ~40 min) and republishing. That is the next
-experiment if anyone wants the system twice as fast.
+**Latency was chased, three ways, and none of them worked.** Streaming buys 0.5-6% because
+73% of a synthesis call is reasoning before any content token exists. Halving the passage
+budget buys 19% of cost and 1% of latency, at a real accuracy cost. `reasoning_effort=low`
+costs 0.692 → 0.631 overall and 3-hop 0.417 → 0.250, and buys nothing measurable.
+
+**All three were run against a broken clock, and finding that was the real result.** `_pace()`
+holds the process to 9 requests/minute — 6,667 ms of sleep per model call, more than the call
+— and it was inside every published latency. Three configurations all measured within 30 ms
+of the pacer floor. Now recorded on the Meter, subtracted by callers, logged as `paced_ms`,
+and covered by `test_reported_latency_excludes_rate_limit_sleep`.
+
+If latency is chased again, the remaining honest levers are: drop the router's model call for
+unambiguous questions (it is half of the 5,088 ms p50, and its 95.4% accuracy is the thing at
+risk), or accept the two-call architecture. `--passages` and `--reasoning` stay in the CLI as
+measurement tools with their negative results recorded.
 
 Optional cleanup, none of it blocking, all of it unchanged from Phase 4:
 
@@ -557,3 +562,15 @@ _Append-only. One line per session — never overwrite previous entries._
   constrained decoding is what makes progressive publication safe. Found the lever that does
   work — `reasoning_effort` low vs high, 16,872 → 6,125 ms — and did NOT adopt it, because it
   changes every answer and would need the whole benchmark re-run first.
+- 2026-08-25: Ran the reasoning_effort experiment and found a fourth measurement bug with it.
+  `low` costs accuracy (0.692 → 0.631 overall, 3-hop 0.417 → 0.250) and buys nothing — which
+  is itself the most interesting result of the day: the retrieval and the context are
+  identical either way, so the degradation is the model failing to *compose* facts it was
+  given, and the multi-hop gap is therefore not something better prompting could produce from
+  passages. The bug: 36% fewer output tokens moved the p50 by 1%, which is impossible unless
+  the clock is wrong. It was — `_pace()`'s 9 RPM sleep (6,667 ms per call, larger than the
+  call) was inside every published latency, and three different configurations had all been
+  measuring the pacer floor to within 30 ms. "The graph arm is 2x slower" was an artifact of
+  call count under a self-imposed cap. Corrected: 5,088 vs 2,487 ms p50 — still 2x, because
+  two sequential model calls against one really is 2x, but at half the absolute numbers.
+  Published numbers all re-derived from one coherent cold run.
