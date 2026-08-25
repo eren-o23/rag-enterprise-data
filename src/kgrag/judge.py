@@ -253,7 +253,7 @@ ARMS = (("vector-only", False), ("graph + vector", True))
 CORRECT = "correct"
 
 
-def _rows(model: str, graph: bool) -> dict[str, dict[str, Any]]:
+def _rows(model: str, graph: bool, passage_limit: int | None = None) -> dict[str, dict[str, Any]]:
     """The current system's answers for one arm, straight out of `answer.py`'s own reader.
 
     `_prior` already enforces everything a benchmark needs: right model, right arm, written
@@ -261,7 +261,11 @@ def _rows(model: str, graph: bool) -> dict[str, dict[str, Any]]:
     returned. Reimplementing that here would be a second set of rules to keep in sync, and
     the one that drifted would be the one publishing the numbers.
     """
-    return answer_mod._prior(model, constrain=True, graph=graph)
+    # Only the graph arm varies with the passage budget in these experiments; the baseline
+    # stays at the default so it remains the fixed reference every variant is measured
+    # against. Passing the limit to both would move the comparison and the thing compared.
+    limit = passage_limit if (passage_limit and graph) else answer_mod.PASSAGE_LIMIT
+    return answer_mod._prior(model, constrain=True, graph=graph, passage_limit=limit)
 
 
 def _verdict(
@@ -300,14 +304,17 @@ def _slices(questions: list[dict[str, Any]]) -> list[tuple[str, list[int]]]:
     return out
 
 
-def run(model: str = answer_mod.SYNTH_MODEL, use_cache: bool = True) -> None:
+def run(model: str = answer_mod.SYNTH_MODEL, use_cache: bool = True,
+        passage_limit: int | None = None) -> None:
     questions = list(jsonl.read(QUESTIONS))
     index = entity_index()
-    arms = {label: _rows(model, graph) for label, graph in ARMS}
+    arms = {label: _rows(model, graph, passage_limit) for label, graph in ARMS}
     for (label, graph), rows in zip(ARMS, arms.values()):
         missing = [q["qid"] for q in questions if q["qid"] not in rows]
         if missing:
             flag = "--constrained" if graph else "--baseline"
+            if graph and passage_limit:
+                flag += f" --passages {passage_limit}"
             raise SystemExit(
                 f"{label}: {len(missing)} of {len(questions)} questions have no current "
                 f"answer ({', '.join(missing[:5])}...).\n"
@@ -316,7 +323,8 @@ def run(model: str = answer_mod.SYNTH_MODEL, use_cache: bool = True) -> None:
             )
 
     print("=" * 74)
-    print(f"benchmark — {len(questions)} questions, vector-only vs graph + vector")
+    variant = f", graph arm at {passage_limit} passages" if passage_limit else ""
+    print(f"benchmark — {len(questions)} questions, vector-only vs graph + vector{variant}")
     print("=" * 74)
     print(
         "Two instruments. The key has no opinion: exact counts, the endpoint the question\n"

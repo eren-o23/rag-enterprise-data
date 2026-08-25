@@ -154,7 +154,7 @@ def _schema(valid_ids: list[str], constrain: bool) -> dict[str, Any]:
     return schema
 
 
-def synth_sha(constrain: bool) -> str:
+def synth_sha(constrain: bool, passage_limit: int = PASSAGE_LIMIT) -> str:
     """Fingerprint of everything that decides how an answer is produced.
 
     Same job as `route.router_sha`, and for the same reason: the eval resumes from its own
@@ -163,6 +163,12 @@ def synth_sha(constrain: bool) -> str:
     resume each other's rows.
     """
     material = f"{SYSTEM}|{json.dumps(_schema([], constrain), sort_keys=True)}|{constrain}"
+    # The passage count changes what the model was shown, so a row produced under one is not
+    # a measurement of another -- but it is appended only when non-default, so the default
+    # still hashes as it did and every row already on disk stays resumable. `fireworks.embed`
+    # keeps the same asymmetry for `dimensions`, and for the same reason.
+    if passage_limit != PASSAGE_LIMIT:
+        material += f"|passages={passage_limit}"
     return hashlib.sha256(material.encode()).hexdigest()[:12]
 
 
@@ -201,6 +207,7 @@ def build_context(
     facts: list[dict[str, Any]],
     texts: list[dict[str, Any]],
     aggregates: list[dict[str, Any]] | None = None,
+    passage_limit: int = PASSAGE_LIMIT,
 ) -> tuple[str, set[str]]:
     """The two labelled blocks, and the ids a citation is allowed to name.
 
@@ -235,7 +242,7 @@ def build_context(
         blocks.append("\n".join(lines))
     if texts:
         lines = ["PASSAGES (retrieved filing text)"]
-        for passage in texts[:PASSAGE_LIMIT]:
+        for passage in texts[:passage_limit]:
             citable.add(passage["chunk_id"])
             lines.append(
                 f"\n[{passage['chunk_id']}] {passage['company']} · {passage['form']} · "
@@ -369,6 +376,7 @@ def answer(
     qid: str | None = None,
     log: bool = True,
     graph: bool = True,
+    passage_limit: int = PASSAGE_LIMIT,
 ) -> dict[str, Any]:
     """Route, assemble, synthesise, validate. Returns the log row.
 
@@ -413,7 +421,7 @@ def answer(
         row["chunk_ids"] = row["vector_ids"]
 
     texts = passages(conn, row["chunk_ids"])
-    context, valid_ids = build_context(facts, texts, row.get("graph_aggregates"))
+    context, valid_ids = build_context(facts, texts, row.get("graph_aggregates"), passage_limit)
 
     if row["route"] == "refuse" or not context:
         # The router refused, or retrieval returned nothing. Either way there is nothing to
@@ -433,12 +441,12 @@ def answer(
         "question": question,
         "model": model,
         "arm": arm_of(constrain, graph),
-        "synth_sha": synth_sha(constrain),
+        "synth_sha": synth_sha(constrain, passage_limit),
         "route": row["route"],
         "fallback": fallback,
         "n_facts": len(facts),
         "n_aggregates": len(row.get("graph_aggregates") or []),
-        "n_passages": len(texts),
+        "n_passages": min(len(texts), passage_limit),
         "context_chars": len(context),
         "answerable": ans.answerable,
         "refusal_reason": ans.refusal_reason,
@@ -468,6 +476,7 @@ def run(
     fresh: bool = False,
     use_cache: bool = True,
     baseline: bool = False,
+    passage_limit: int = PASSAGE_LIMIT,
 ) -> None:
     # The baseline runs constrained, because that is what the hybrid arm runs. Comparing a
     # constrained system against a free one would put the enforcement question and the
@@ -482,9 +491,11 @@ def run(
             _print_one(answer(
                 question, session, conn, index,
                 model=model, constrain=constrained, use_cache=use_cache, graph=not baseline,
+                passage_limit=passage_limit,
             ))
             return
-        _eval(session, conn, index, model, constrained, fresh, use_cache, not baseline)
+        _eval(session, conn, index, model, constrained, fresh, use_cache, not baseline,
+              passage_limit)
 
 
 def _print_one(row: dict[str, Any]) -> None:
@@ -507,7 +518,8 @@ def _print_one(row: dict[str, Any]) -> None:
     print(f"latency    {row['latency_ms']} ms   spend ${row['usd']:.5f}")
 
 
-def _prior(model: str, constrain: bool, graph: bool = True) -> dict[str, dict[str, Any]]:
+def _prior(model: str, constrain: bool, graph: bool = True,
+           passage_limit: int = PASSAGE_LIMIT) -> dict[str, dict[str, Any]]:
     """qid -> the last logged answer for this model and arm. Same rules as `route._prior`.
 
     Rows written by a different prompt, schema or arm are not resumable, and neither is a
@@ -516,7 +528,7 @@ def _prior(model: str, constrain: bool, graph: bool = True) -> dict[str, dict[st
     able to fail.
     """
     prior: dict[str, dict[str, Any]] = {}
-    sha = synth_sha(constrain)
+    sha = synth_sha(constrain, passage_limit)
     arm = arm_of(constrain, graph)
     for row in jsonl.read(ANSWER_LOG):
         if not row.get("qid") or row.get("model") != model:
@@ -548,6 +560,7 @@ def _eval(
     fresh: bool,
     use_cache: bool = True,
     graph: bool = True,
+    passage_limit: int = PASSAGE_LIMIT,
 ) -> None:
     questions = list(jsonl.read(QUESTIONS))
     if not questions:
@@ -566,13 +579,14 @@ def _eval(
     )
 
     before = fireworks.METER.usd
-    prior = {} if fresh else _prior(model, constrain, graph)
+    prior = {} if fresh else _prior(model, constrain, graph, passage_limit)
     rows: list[dict[str, Any]] = []
     for q in questions:
         done = prior.get(q["qid"])
         rows.append(done if done else answer(
             q["question"], session, conn, index,
             model=model, constrain=constrain, use_cache=use_cache, qid=q["qid"], graph=graph,
+            passage_limit=passage_limit,
         ))
     spend = fireworks.METER.usd - before
     resumed = sum(1 for q in questions if q["qid"] in prior)

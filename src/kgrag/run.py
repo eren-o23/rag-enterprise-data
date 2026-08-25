@@ -49,6 +49,13 @@ def main() -> None:
         "invented citation cannot be generated (default: validate and regenerate)",
     )
     parser.add_argument(
+        "--passages",
+        type=int,
+        default=None,
+        help="answer/bench: how many retrieved passages reach the prompt (default: 10). "
+        "Non-default runs get their own synth_sha, so the two never resume each other",
+    )
+    parser.add_argument(
         "--baseline",
         action="store_true",
         help="answer: the Phase 5 vector-only baseline — no router, no graph, same prompt "
@@ -120,6 +127,7 @@ def main() -> None:
                 fresh=args.fresh,
                 use_cache=not args.no_cache,
                 baseline=args.baseline,
+                passage_limit=args.passages or answer_mod.PASSAGE_LIMIT,
             )
         except fireworks.BudgetExceeded as exc:
             raise SystemExit(f"\nBUDGET STOP: {exc}") from exc
@@ -131,7 +139,7 @@ def main() -> None:
         from . import judge
 
         try:
-            judge.run(use_cache=not args.no_cache)
+            judge.run(use_cache=not args.no_cache, passage_limit=args.passages)
         except fireworks.BudgetExceeded as exc:
             raise SystemExit(f"\nBUDGET STOP: {exc}") from exc
         finally:
