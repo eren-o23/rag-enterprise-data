@@ -882,3 +882,79 @@ def test_no_cache_reaches_the_router_not_just_the_synthesiser(monkeypatch):
     monkeypatch.setattr(answer_mod, "passages", lambda conn, ids: [])
     answer_mod.answer("q", None, None, {}, use_cache=False, log=False)
     assert seen[-1] is False
+
+
+def test_the_claim_scanner_emits_only_finished_claims():
+    """A claim may not be published before its citations are validated, and a citation
+    cannot be validated from half a token. The scanner therefore hands on a claim only when
+    its object closes -- and must not close early on a brace inside a string, which an
+    entity name can legitimately contain."""
+    from kgrag.answer import ClaimScanner
+
+    doc = (
+        '{"answerable": true, "claims": ['
+        '{"text": "Intel is audited by E&Y {sic}.", "citations": ["c1"]}, '
+        '{"text": "AMD acquired Xilinx.", "citations": ["c2", "c3"]}'
+        '], "refusal_reason": ""}'
+    )
+    # Fed one character at a time: the worst case a token stream can produce.
+    scanner, got = ClaimScanner(), []
+    for ch in doc:
+        got += scanner.feed(ch)
+    assert [c["text"] for c in got] == [
+        "Intel is audited by E&Y {sic}.", "AMD acquired Xilinx."
+    ]
+    assert got[1]["citations"] == ["c2", "c3"]
+
+    # Nothing is emitted from a document that stops mid-claim.
+    partial = ClaimScanner()
+    assert partial.feed('{"answerable": true, "claims": [{"text": "half a cl') == []
+
+
+def test_streaming_never_publishes_a_claim_it_could_not_validate(monkeypatch):
+    """Constrained decoding makes an invented citation unreachable, and the per-claim check
+    still runs: the enum makes it impossible in theory, the set membership makes it
+    impossible in fact. A claim that fails is withheld rather than corrected, because a
+    published claim cannot be un-published."""
+    from kgrag import answer as answer_mod
+
+    doc = (
+        '{"answerable": true, "claims": ['
+        '{"text": "good", "citations": ["c1"]}, '
+        '{"text": "bad", "citations": ["nope"]}, '
+        '{"text": "uncited", "citations": []}'
+        '], "refusal_reason": ""}'
+    )
+    monkeypatch.setattr(answer_mod.fireworks, "chat_stream",
+                        lambda **k: iter([doc[i:i + 7] for i in range(0, len(doc), 7)]))
+
+    events = list(answer_mod.stream("q", "ctx", {"c1"}))
+    claims = [c for kind, c in events if kind == "claim"]
+    assert [c.text for c in claims] == ["good"], "an unvalidatable claim is never yielded"
+    kind, final = events[-1]
+    assert kind == "done" and final.answerable is True
+
+
+def test_a_streamed_call_and_a_plain_one_share_one_cache_entry(monkeypatch, tmp_path):
+    """Streaming is a delivery decision, not a different question. If the keys diverged,
+    every answer would be paid for twice and the two paths could return different text for
+    the same input -- which would make the streamed endpoint unmeasurable against the
+    benchmark."""
+    import hashlib
+    import json as _json
+
+    from kgrag import fireworks
+
+    args = {"system": "S", "user": "U", "schema": {"type": "object"},
+            "model": fireworks.EXTRACT_MODEL}
+    key = hashlib.sha256(
+        _json.dumps([args["model"], fireworks.PROMPT_VERSION, args["system"], args["user"],
+                     args["schema"]], sort_keys=True).encode()
+    ).hexdigest()
+
+    monkeypatch.setattr(fireworks, "CACHE", tmp_path)
+    monkeypatch.setattr(fireworks, "_cache_path", lambda k: tmp_path / f"{k}.json")
+    (tmp_path / f"{key}.json").write_text('{"answerable": false, "claims": []}')
+
+    streamed = "".join(fireworks.chat_stream(**args))
+    assert _json.loads(streamed) == fireworks.chat_json(**args)

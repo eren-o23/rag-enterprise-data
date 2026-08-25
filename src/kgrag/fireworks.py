@@ -14,7 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from typing import Any, TypeVar
 
@@ -201,6 +201,71 @@ def chat_json(
     payload = json.loads(response.choices[0].message.content)
     path.write_text(json.dumps(payload))
     return payload
+
+
+def chat_stream(
+    *,
+    system: str,
+    user: str,
+    schema: dict[str, Any],
+    model: str = EXTRACT_MODEL,
+    temperature: float = 0.0,
+    base_url: str = BASE_URL,
+    use_cache: bool = True,
+    timeout: float = DEFAULT_TIMEOUT,
+    attempts: int = 6,
+) -> Iterator[str]:
+    """`chat_json` with the tokens handed over as they arrive. Same cache, same key.
+
+    The key is computed exactly as `chat_json` computes it, deliberately: streaming is a
+    delivery decision, not a different question, so a streamed call must be able to read a
+    cached non-streamed answer and vice versa. A cache hit yields the whole document in one
+    piece, which is the honest shape of a cache hit -- there is nothing to stream.
+
+    Usage arrives on a final chunk that carries no choices, which is why
+    `stream_options.include_usage` is set: without it a streamed call is invisible to the
+    Meter and this project's cost reporting would silently stop counting.
+
+    ponytail: `_with_backoff` covers opening the stream, not a failure part-way through it.
+    A mid-stream drop surfaces to the caller instead of being retried, because retrying
+    would replay tokens the caller has already published. Answers are short enough that this
+    has not happened; if it starts to, the fix is a retry that buffers rather than yields.
+    """
+    key = hashlib.sha256(
+        json.dumps([model, PROMPT_VERSION, system, user, schema], sort_keys=True).encode()
+    ).hexdigest()
+    path = _cache_path(key)
+    if use_cache and path.exists():
+        METER.cached += 1
+        yield path.read_text()
+        return
+
+    stream = _with_backoff(
+        lambda: client(base_url, timeout).chat.completions.create(
+            model=model,
+            temperature=temperature,
+            messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+            response_format={"type": "json_schema", "json_schema": {"name": "extraction", "schema": schema}},
+            stream=True,
+            stream_options={"include_usage": True},
+        ),
+        attempts=attempts,
+    )
+    parts: list[str] = []
+    for chunk in stream:
+        if getattr(chunk, "usage", None):
+            METER.record(model, chunk.usage.prompt_tokens, chunk.usage.completion_tokens)
+        if not chunk.choices:
+            continue
+        delta = chunk.choices[0].delta.content
+        if delta:
+            parts.append(delta)
+            yield delta
+    text = "".join(parts)
+    # Only cache what parses. A truncated stream is not an answer, and caching one would
+    # serve it back forever at $0.00 -- the failure mode `chat_json` avoids by construction.
+    json.loads(text)
+    path.write_text(text)
 
 
 def _embed_key(model: str, text: str, dimensions: int | None) -> str:

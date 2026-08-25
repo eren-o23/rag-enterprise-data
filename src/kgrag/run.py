@@ -49,6 +49,12 @@ def main() -> None:
         "invented citation cannot be generated (default: validate and regenerate)",
     )
     parser.add_argument(
+        "--stream",
+        action="store_true",
+        help="answer --question: publish each claim as it is written, and report "
+        "time-to-first-claim against the total (constrained decoding only)",
+    )
+    parser.add_argument(
         "--passages",
         type=int,
         default=None,
@@ -128,6 +134,7 @@ def main() -> None:
                 use_cache=not args.no_cache,
                 baseline=args.baseline,
                 passage_limit=args.passages or answer_mod.PASSAGE_LIMIT,
+                stream_out=args.stream,
             )
         except fireworks.BudgetExceeded as exc:
             raise SystemExit(f"\nBUDGET STOP: {exc}") from exc

@@ -15,14 +15,17 @@ request takes its own.
 
 from __future__ import annotations
 
+import json
 from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from . import answer as answer_mod
 from . import load, route
+from . import route as route_mod
 from .embed import connect
 
 STATE: dict[str, Any] = {}
@@ -97,3 +100,52 @@ def ask(body: Ask) -> dict[str, Any]:
         "latency_ms": row["latency_ms"],
         "usd": row["usd"],
     }
+
+
+def _sse(event: str, payload: dict[str, Any]) -> str:
+    return f"event: {event}\ndata: {json.dumps(payload)}\n\n"
+
+
+@app.post("/ask/stream")
+def ask_stream(body: Ask) -> StreamingResponse:
+    """The same answer, published claim by claim as it is written.
+
+    Latency here is two sequential model calls -- the router and the synthesiser -- and
+    almost nothing else: retrieval, graph traversal included, is ~31 ms at p50. Waiting for
+    the last token before showing the first is therefore the single largest avoidable part
+    of what a user experiences, and it buys nothing: a claim is complete and validated long
+    before the answer is.
+
+    Constrained decoding only, and that is not a limitation, it is the reason this endpoint
+    can exist. See `answer.stream`.
+
+    Retrieval still happens up front, so the first event carries the route and the retrieved
+    ids -- the client knows what the answer may cite before it cites anything.
+    """
+    def events():
+        try:
+            with STATE["driver"].session() as session, connect() as conn:
+                row = route_mod.route(body.question, session, conn, STATE["index"])
+                if row["route"] == "graph" and not row["graph_ids"]:
+                    row["vector_ids"] = route_mod.vector_path(conn, body.question, route_mod.TOP_K)
+                    row["chunk_ids"] = row["vector_ids"]
+                texts = answer_mod.passages(conn, row["chunk_ids"])
+                context, valid_ids = answer_mod.build_context(
+                    row["graph_facts"], texts, row.get("graph_aggregates")
+                )
+                yield _sse("retrieved", {"route": row["route"], "citable": sorted(valid_ids)})
+                if row["route"] == "refuse" or not context:
+                    yield _sse("done", {"answerable": False,
+                                        "refusal_reason": "router_refused" if row["route"] == "refuse"
+                                        else "no_context"})
+                    return
+                for kind, item in answer_mod.stream(body.question, context, valid_ids):
+                    if kind == "claim":
+                        yield _sse("claim", item.model_dump())
+                    else:
+                        yield _sse("done", {"answerable": item.answerable,
+                                            "refusal_reason": item.refusal_reason or None})
+        except Exception as exc:  # noqa: BLE001 — a stream cannot raise a 503 once it has begun
+            yield _sse("error", {"error": f"{type(exc).__name__}: {exc}"})
+
+    return StreamingResponse(events(), media_type="text/event-stream")

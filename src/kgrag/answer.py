@@ -355,6 +355,101 @@ def synthesise(
     return _refusal("citation_unrecoverable"), attempts, rejected, reformatted
 
 
+class ClaimScanner:
+    """Pulls complete claim objects out of a JSON document that is still being written.
+
+    Streaming a structured answer has one hard constraint: **a claim may not be published
+    before its citations are validated**, and a citation cannot be validated from half a
+    token. So the buffer is scanned for balanced objects inside the `claims` array, and only
+    a whole one is handed on. Braces inside string values are ignored, because an entity
+    name containing a brace would otherwise close an object early.
+
+    ponytail: a hand-rolled brace scan rather than an incremental JSON parser. The schema is
+    three fields deep and `claims` is the only array of objects in it, so the state that
+    matters is "in a string" and "how deep". A parser dependency for that would be the tail
+    wagging the dog. Upgrade path if the schema ever nests: `json-stream` or `ijson`.
+    """
+
+    def __init__(self) -> None:
+        self.buf = ""
+        self._i = 0          # scan position
+        self._open = False   # have we passed the '[' that opens claims?
+        self._start: int | None = None
+        self._depth = 0
+        self._in_string = False
+        self._escaped = False
+
+    def feed(self, delta: str) -> list[dict[str, Any]]:
+        """Add a chunk of the stream; return whatever claims it completed."""
+        self.buf += delta
+        out: list[dict[str, Any]] = []
+        while self._i < len(self.buf):
+            ch = self.buf[self._i]
+            self._i += 1
+            if self._in_string:
+                if self._escaped:
+                    self._escaped = False
+                elif ch == "\\":
+                    self._escaped = True
+                elif ch == '"':
+                    self._in_string = False
+                continue
+            if ch == '"':
+                self._in_string = True
+                continue
+            if not self._open:
+                # The claims array opens at the first '[' after the key names it.
+                if ch == "[" and '"claims"' in self.buf[: self._i]:
+                    self._open = True
+                continue
+            if ch == "{":
+                if self._depth == 0:
+                    self._start = self._i - 1
+                self._depth += 1
+            elif ch == "}":
+                self._depth -= 1
+                if self._depth == 0 and self._start is not None:
+                    out.append(json.loads(self.buf[self._start : self._i]))
+                    self._start = None
+            elif ch == "]" and self._depth == 0:
+                self._open = False  # claims array closed; nothing further is a claim
+        return out
+
+
+def stream(
+    question: str,
+    context: str,
+    valid_ids: set[str],
+    model: str = SYNTH_MODEL,
+    use_cache: bool = True,
+) -> Any:
+    """Yield ("claim", Claim) as each one is finished, then ("done", Answer).
+
+    **Constrained decoding is what makes this safe**, and it is the only arm offered here.
+    The free arm's contract is validate-then-regenerate: a citation may turn out to be
+    invalid, and the answer is thrown away and asked for again. You cannot un-publish a
+    claim a user has already read, so streaming it would mean publishing text this project
+    might later reject -- exactly the guarantee Phase 4 exists to make. With the retrieved
+    ids in the schema as an enum, an invalid citation is unreachable rather than merely
+    caught, so a finished claim is a validated claim.
+
+    Set membership is still checked per claim rather than trusted. The enum makes it
+    impossible in theory; the check costs a hash lookup and makes it impossible in fact.
+    """
+    scanner = ClaimScanner()
+    schema = _schema(sorted(valid_ids), constrain=True)
+    for delta in fireworks.chat_stream(
+        system=SYSTEM, user=_user(question, context), schema=schema, model=model,
+        timeout=SYNTH_TIMEOUT, attempts=SYNTH_ATTEMPTS, use_cache=use_cache,
+    ):
+        for raw in scanner.feed(delta):
+            claim = Claim.model_validate(raw)
+            claim.citations = [_clean(c) for c in claim.citations]
+            if claim.citations and not (set(claim.citations) - valid_ids):
+                yield "claim", claim
+    yield "done", Answer.model_validate(json.loads(scanner.buf))
+
+
 def _refusal(reason: str) -> Answer:
     return Answer(answerable=False, claims=[], refusal_reason=reason)
 
@@ -469,6 +564,44 @@ def answer(
 # ---------------------------------------------------------------------------
 
 
+def stream_one(
+    question: str,
+    session: Session,
+    conn: psycopg.Connection,
+    index: dict[str, list[dict[str, Any]]],
+    model: str = SYNTH_MODEL,
+    use_cache: bool = True,
+) -> None:
+    """Print claims as they arrive, and report time-to-first-claim against the total.
+
+    The number this exists to produce: what a user waits before seeing anything, versus
+    what they wait for the finished answer. Run it with --no-cache or it measures the disk.
+    """
+    start = time.perf_counter()
+    row = route_mod.route(question, session, conn, index, log=False, use_cache=use_cache)
+    texts = passages(conn, row["chunk_ids"])
+    context, valid_ids = build_context(row["graph_facts"], texts, row.get("graph_aggregates"))
+    routed = time.perf_counter()
+    if row["route"] == "refuse" or not context:
+        print(f"\nREFUSED    {'router_refused' if row['route'] == 'refuse' else 'no_context'}")
+        print(f"latency    {(routed - start) * 1000:,.0f} ms (no synthesis call)")
+        return
+
+    first: float | None = None
+    for kind, item in stream(question, context, valid_ids, model, use_cache=use_cache):
+        if kind == "claim":
+            if first is None:
+                first = time.perf_counter()
+            print(f"  • {item.text}")
+            print(f"    {' '.join('[' + c + ']' for c in item.citations)}")
+    done = time.perf_counter()
+    print(f"\nroute      {row['route']}   retrieval {(routed - start) * 1000:,.0f} ms")
+    if first:
+        print(f"first claim {(first - start) * 1000:,.0f} ms   "
+              f"(router + retrieval + first claim written)")
+    print(f"complete   {(done - start) * 1000:,.0f} ms")
+
+
 def run(
     question: str | None = None,
     model: str = SYNTH_MODEL,
@@ -477,6 +610,7 @@ def run(
     use_cache: bool = True,
     baseline: bool = False,
     passage_limit: int = PASSAGE_LIMIT,
+    stream_out: bool = False,
 ) -> None:
     # The baseline runs constrained, because that is what the hybrid arm runs. Comparing a
     # constrained system against a free one would put the enforcement question and the
@@ -487,6 +621,9 @@ def run(
         raise SystemExit("data/entities.jsonl is empty — run `kgrag resolve` first.")
 
     with load.driver() as db, db.session() as session, connect() as conn:
+        if question and stream_out:
+            stream_one(question, session, conn, index, model=model, use_cache=use_cache)
+            return
         if question:
             _print_one(answer(
                 question, session, conn, index,
