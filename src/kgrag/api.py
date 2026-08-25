@@ -25,7 +25,6 @@ from pydantic import BaseModel, Field
 
 from . import answer as answer_mod
 from . import load, route
-from . import route as route_mod
 from .embed import connect
 
 STATE: dict[str, Any] = {}
@@ -125,9 +124,9 @@ def ask_stream(body: Ask) -> StreamingResponse:
     def events():
         try:
             with STATE["driver"].session() as session, connect() as conn:
-                row = route_mod.route(body.question, session, conn, STATE["index"])
+                row = route.route(body.question, session, conn, STATE["index"])
                 if row["route"] == "graph" and not row["graph_ids"]:
-                    row["vector_ids"] = route_mod.vector_path(conn, body.question, route_mod.TOP_K)
+                    row["vector_ids"] = route.vector_path(conn, body.question, route.TOP_K)
                     row["chunk_ids"] = row["vector_ids"]
                 texts = answer_mod.passages(conn, row["chunk_ids"])
                 context, valid_ids = answer_mod.build_context(

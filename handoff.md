@@ -212,6 +212,12 @@ first: this machine has 8 GB and swap was near capacity during the Phase 1 bakeo
 - **Re-running the identical code moves a slice by ~one question.** Aggregation went 0.875 →
   0.750 and overall 0.723 → 0.708 across two runs of the same commit. Serverless inference at
   temperature 0 is not bit-reproducible. Quote the intervals, never the third decimal.
+- **Streaming is constrained-decoding only, and that is load-bearing.** The free arm may
+  reject an answer and regenerate it; a claim a user has already read cannot be un-published.
+  `answer.stream` yields a claim only once its object closes AND its citations resolve.
+- **`fireworks.chat_stream` shares `chat_json`'s cache key exactly.** Streaming is a delivery
+  decision, not a different question. If the keys diverged, every answer would be paid for
+  twice and the two paths could return different text for the same input.
 - **`kgrag bench` reads the answer log through `answer._prior`, not its own reader.** That
   function already enforces right model, right arm, current `synth_sha`, and no row whose
   synthesiser call never returned. A second set of rules would drift, and the one that
@@ -375,6 +381,15 @@ score-shaped one:
   fitting the eval, and it would cost this benchmark the only thing that makes it worth
   reading.
 
+**Latency, if it is ever worth chasing.** Two candidate fixes were measured and neither is
+one: streaming buys 0.5-6% because 73% of the synthesis call is reasoning before any content
+token exists, and halving the passage budget buys 19% of cost but 1% of latency and costs
+accuracy (0.708 → 0.677, 3-hop out of significance). The lever that works is
+**`reasoning_effort`** — `low` vs `high` on one probe is 16,872 → 6,125 ms with reasoning
+tokens 1,010 → 132. It is untested against accuracy and changes every answer, so adopting it
+means re-running the whole benchmark (~$0.20, ~40 min) and republishing. That is the next
+experiment if anyone wants the system twice as fast.
+
 Optional cleanup, none of it blocking, all of it unchanged from Phase 4:
 
 - 7 answerable questions still refused at synthesis (`m008`, `m025`, `m026`, `m032`, `m035`,
@@ -529,3 +544,16 @@ _Append-only. One line per session — never overwrite previous entries._
   synthesis ~6.7s + **31 ms** of actual retrieval, so nothing here is slow because of the
   graph. Also noted that re-running identical code moves a slice by about one question
   (aggregation 0.875 → 0.750, overall 0.723 → 0.708).
+- 2026-08-25: Built the two latency fixes the decomposition suggested, measured both, and
+  published both as negative results. Streaming (`POST /ask/stream`, `answer.stream`, a
+  brace-scanner that yields a claim only when its object closes and its citations resolve)
+  buys 0.5-6% end to end, because **73% of the synthesis call elapses before the first
+  content token exists** — gpt-oss-120b reasons before it writes, so output length correlates
+  with latency through reasoning rather than through typing. The correlation was real and the
+  causal story I built on it was wrong. Halving the passage budget cut cost 19% and latency
+  1%, at 0.708 → 0.677 accuracy with 3-hop falling out of significance; default stays at 10
+  and `--passages N` stays as a measurement tool. Kept the streaming endpoint anyway: it is
+  correct architecture for a non-reasoning synthesiser, and building it established that
+  constrained decoding is what makes progressive publication safe. Found the lever that does
+  work — `reasoning_effort` low vs high, 16,872 → 6,125 ms — and did NOT adopt it, because it
+  changes every answer and would need the whole benchmark re-run first.

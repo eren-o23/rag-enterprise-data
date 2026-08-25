@@ -473,9 +473,36 @@ sequence, and the baseline pays one of them, which is exactly why it is twice as
 Latency tracks *output* length far more than input (r = +0.59 vs +0.18): the tail is
 questions with long answers, not questions with big contexts.
 
-That decomposition also says what would actually help — streaming the answer, or replacing
-the router's model call with a cheap first pass for unambiguous questions — and what would
-not: tuning the index. `ef_search` is not in the critical path at all.
+That decomposition suggested two fixes. **Both were measured and both were largely wrong**,
+which is why they are written up here rather than shipped as claims.
+
+**Streaming the answer buys 0.5-6%, not 90%.** Latency correlates with output length
+(r = +0.59) far more than with input (+0.18), so the obvious read is that the model spends
+its time writing and a user should see the first words in under a second. Measured directly,
+**73% of the synthesis call elapses before the first content token exists**: `gpt-oss-120b`
+is a reasoning model, and the answer is written in 2.9s of an 11.1s call. Output length
+correlates with latency because longer answers need more *reasoning*, not because writing is
+slow. Time to first claim against the complete answer: 9,472 vs 10,099 ms on a five-claim
+answer, 8,296 vs 8,342 ms on a one-claim answer.
+
+The endpoint ships anyway (`POST /ask/stream`), because it is the right architecture and it
+costs nothing — but the honest number is a rounding error, and the reason is worth more than
+the feature.
+
+**Halving the prompt cut cost 19% and latency 1%.** Ten passages at ~36k characters produce
+a 137-character answer at p50, so five passages looked like free latency. It is free *cost*
+— $0.00162 → $0.00131 — and no latency at all (13,362 → 13,194 ms p50), which is the same
+finding from the other side: the prefill is not what you are waiting for. Accuracy went
+0.708 → 0.677 with 3-hop falling out of significance and refusals rising 6 → 9. The default
+stays at 10; `--passages N` stays as a measurement tool.
+
+**What actually moves it: `reasoning_effort`.** On the same question, same answer shape,
+`low` versus `high` is **16,872 ms → 6,125 ms** with reasoning tokens dropping 1,010 → 132.
+That is a 64% cut and it is untested against accuracy — a real experiment, not a setting to
+flip, because it changes every answer and would need the whole benchmark re-run to publish.
+
+What would *not* help, in any version: tuning the index. `ef_search` is not in the critical
+path at all.
 
 **This table exists because the first version of it was wrong.** Phase 5's latency was
 measured with `kgrag answer --no-cache`, which bypassed the answer cache and left the router
@@ -708,6 +735,7 @@ uv run kgrag verify         # the gate: graph, vector store, and the join betwee
 uv run kgrag route          # route each question, measure the decision
 uv run kgrag answer         # grounded answers; --constrained, --no-cache, --fresh
 uv run kgrag answer --baseline --no-cache   # the vector-only arm, no router, no graph
+uv run kgrag answer --question "..." --stream   # claims as they are written, with timings
 uv run kgrag bench          # judge both arms and print the benchmark table
 uv run uvicorn kgrag.api:app
 ```

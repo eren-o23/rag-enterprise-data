@@ -1038,3 +1038,42 @@ Worth recording alongside: re-running the identical code end to end moved the ag
 slice by one question (0.875 → 0.750) and the overall number by 0.015. Serverless inference
 at temperature 0 is not bit-reproducible, which is a second reason the published intervals
 matter more than the third decimal.
+
+## Streaming cannot fix a wait that is spent thinking
+
+Latency tracks output length (r = +0.59) far more than input (+0.18), which reads as "the
+model spends its time writing, so stream it". `POST /ask/stream` was built on that reasoning
+and then measured: **73% of the synthesis call elapses before the first content token
+exists.** `gpt-oss-120b` reasons before it writes — 1,010 reasoning tokens against 200 of
+answer on a typical question — so the content phase is 2.9s of an 11.1s call. Output length
+correlates with latency because a longer answer needs more reasoning, not because writing is
+slow. The correlation was real and the causal story behind it was wrong.
+
+Measured end to end, time to first claim versus the complete answer: **9,472 vs 10,099 ms**
+on a five-claim answer, **8,296 vs 8,342 ms** on a one-claim answer. Between 0.5% and 6%.
+
+The endpoint ships regardless, for two reasons that are not the original one. It is correct
+architecture the day the synthesis model is not a reasoning model, and it costs nothing to
+keep. And building it forced the question of what may be published before validation — the
+answer being that **constrained decoding is what makes progressive publication safe at all**.
+The free arm's contract is validate-then-regenerate: it may throw an answer away and ask
+again, and a claim a user has already read cannot be un-published. Phase 4 built the enum arm
+to test a hypothesis about invented citations; it turns out to be the thing that lets a claim
+leave the process early.
+
+## Halving the prompt is a cost optimisation wearing a latency costume
+
+Ten passages at ~36,000 characters produce a 137-character answer at p50, which makes five
+passages look like free latency. Measured over the full 65 questions: latency 13,362 → 13,194
+ms p50 (**1%**), cost $0.00162 → $0.00131 (**19%**), accuracy 0.708 → 0.677 with the 3-hop
+slice falling out of significance and refusals rising from 6 to 9.
+
+Same lesson as the streaming result from the other side: **prefill is not what you are waiting
+for**. The production default stays at 10 passages, because a 19% cost saving on a $0.0016
+query does not buy an accuracy regression pointed at the multi-hop slice the whole project is
+about. `--passages N` stays in the CLI as a measurement tool, with its own `synth_sha` suffix
+so a variant run can never resume the default's rows.
+
+The lever that does move latency is `reasoning_effort`: `low` against `high` on one probe is
+16,872 ms → 6,125 ms, reasoning tokens 1,010 → 132. Untested against accuracy, and therefore
+not adopted — it changes every answer in the benchmark.
