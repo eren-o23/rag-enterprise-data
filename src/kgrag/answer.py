@@ -111,6 +111,11 @@ RULES:
    answer; asserting the unsupported part loses the reader's trust.
 5. Prefer graph facts for connections between entities and passages for language, policy
    and detail. When both support a claim, cite both.
+5b. A GRAPH FACT containing → is one chain, read left to right: each step begins where the
+   previous step ended. A question that asks about something reached THROUGH another entity
+   is asking about the end of the chain, not its start. "Who competes with the customers
+   that X supplies?" is answered by the last step of "X supplies Y → Y competes with Z",
+   which is Z. Answering with X's own competitors answers a different question.
 6. Answer in as few claims as the question needs. One fact per claim.
 7. For "how many" questions, use the number in GRAPH COUNTS exactly as written. Do not
    recount from the listed names -- the list is a sample and the count is complete.

@@ -313,7 +313,14 @@ def graph_steps(session: Session, node_ids: list[str], chain: list[str]) -> list
         for row in session.run(statement, id=node_id, limit=PATH_LIMIT):
             paths.append((row["support"], row["steps"]))
     paths.sort(key=lambda pair: -pair[0])
-    return [{**step, "path_support": support} for support, steps in paths for step in steps]
+    # `path` and `hop` are what keep a walk from arriving as an unordered pile of edges.
+    # Without them `verbalise` cannot tell the first step of a chain from the last, and a
+    # question about the far end gets answered at the near end -- see its docstring.
+    return [
+        {**step, "path_support": support, "path": i, "hop": j}
+        for i, (support, steps) in enumerate(paths)
+        for j, step in enumerate(steps)
+    ]
 
 
 def graph_path(session: Session, node_ids: list[str], chain: list[str], k: int) -> list[str]:
@@ -339,26 +346,57 @@ FACT_LIMIT = 20
 
 
 def verbalise(steps: Iterable[dict[str, Any]], limit: int = FACT_LIMIT) -> list[dict[str, Any]]:
-    """Graph edges -> readable statements, each carrying the chunks that justified it.
+    """Graph paths -> readable statements, each carrying the chunks that justified it.
 
     Phase 4's spec is explicit that raw triples generate awkward text, and the fix is one
     phrase per relation in `ontology.RELATION_PHRASE` -- rendered subject-first off the
     edge's own direction, so a neighbourhood walk that entered an edge backwards still
     reads forwards.
 
-    Deduped on the rendered text: two paths through the same hub repeat their shared edge,
-    and the same fact stated twice is prompt tokens spent to say nothing. Steps arrive
-    ranked, so the first sighting of a fact is its best-corroborated one.
+    **A path is rendered whole, as one fact.** It used to be flattened into one fact per
+    edge, and Phase 5 measured what that costs: asked "who competes with the customers that
+    Teradyne supplies?", the system returned Teradyne's own competitors. The traversal had
+    walked the chain correctly and then handed over twenty unordered sentences with nothing
+    marking which edge was the last step, and chain position is not recoverable from a pile
+    of true facts. Joined with an arrow, the far end is where it looks like it is.
+
+    It also fixes the cap. `limit` now counts paths rather than edges, so a chain can no
+    longer be truncated mid-walk -- which it was, systematically and in the worst possible
+    direction: paths arrive ranked by summed support, and the last hop of a chain is the
+    least corroborated thing in it, so the edge that answers the question was the first to
+    be dropped.
+
+    Citations lead with one chunk id per hop, so the three ids `build_context` shows cover
+    every step of the walk rather than three ids from its first edge.
+
+    Deduped on the rendered text: two walks through the same hub repeat their shared path,
+    and the same fact stated twice is prompt tokens spent to say nothing. Paths arrive
+    ranked, so the first sighting is the best-corroborated one.
     """
-    seen: dict[str, dict[str, Any]] = {}
+    walks: dict[Any, list[dict[str, Any]]] = {}
     for step in steps:
-        phrase = RELATION_PHRASE[RelationType(step["type"])]
-        text = f"{step['subject']} {phrase} {step['object']}"
+        # A step with no `path` is its own walk. Keeps single-edge callers (and tests)
+        # rendering exactly as they did before paths were tracked.
+        walks.setdefault(step.get("path", id(step)), []).append(step)
+
+    seen: dict[str, dict[str, Any]] = {}
+    for walk in walks.values():
+        parts = [
+            f"{step['subject']} {RELATION_PHRASE[RelationType(step['type'])]} {step['object']}"
+            for step in walk
+        ]
+        text = " → ".join(parts)
         if text not in seen:
+            leading = [step["chunk_ids"][0] for step in walk if step["chunk_ids"]]
+            rest = [c for step in walk for c in (step["chunk_ids"] or [])[1:]]
+            ids: list[str] = []
+            for chunk_id in leading + rest:
+                if chunk_id not in ids:
+                    ids.append(chunk_id)
             seen[text] = {
                 "text": text,
-                "chunk_ids": list(step["chunk_ids"] or []),
-                "support": step["support"],
+                "chunk_ids": ids,
+                "support": min(step["support"] for step in walk),
             }
         if len(seen) == limit:
             break

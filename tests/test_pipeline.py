@@ -813,3 +813,42 @@ def test_the_answer_key_accepts_an_alias_and_rejects_a_near_miss():
     # Out-of-scope: refusing IS the correct answer, and no model is consulted for that.
     assert key_score({"hops": 0, "gold_chunk_ids": []}, refused, index) == "correct"
     assert key_score({"hops": 0, "gold_chunk_ids": []}, answered, index) == "incorrect"
+
+
+def test_a_chain_renders_as_one_fact_ending_at_the_answer():
+    """Phase 5 measured what a flattened walk costs: asked who competes with the customers
+    Teradyne supplies, the system answered with Teradyne's own competitors. It had both
+    facts and no way to tell which was the last step. A path renders whole, so the far end
+    is where it looks like it is -- and the cap now counts paths, so a chain can no longer
+    lose its terminal edge (the least-corroborated one) while its first edge survives."""
+    from kgrag.route import verbalise
+
+    walk = [
+        {"type": "SUPPLIES", "subject": "TERADYNE, INC", "object": "Lattice",
+         "chunk_ids": ["c1", "c2"], "support": 4, "path": 0, "hop": 0},
+        {"type": "COMPETES_WITH", "subject": "Lattice", "object": "Xilinx",
+         "chunk_ids": ["c9"], "support": 1, "path": 0, "hop": 1},
+    ]
+    facts = verbalise(walk)
+    assert len(facts) == 1, "one walk is one fact, not two"
+    assert facts[0]["text"] == (
+        "TERADYNE, INC supplies Lattice → Lattice competes with Xilinx"
+    )
+    # One id per hop first, so the three ids build_context shows cover the whole walk
+    # rather than three ids from its first edge.
+    assert facts[0]["chunk_ids"][:2] == ["c1", "c9"]
+    assert facts[0]["support"] == 1, "a chain is only as corroborated as its weakest step"
+
+    # The cap counts walks. Twenty two-step chains are twenty facts, none of them halved.
+    many = [
+        {"type": "ACQUIRED", "subject": "A", "object": f"B{i}", "chunk_ids": [f"c{i}a"],
+         "support": 2, "path": i, "hop": 0}
+        for i in range(30)
+    ] + [
+        {"type": "OFFERS", "subject": f"B{i}", "object": f"P{i}", "chunk_ids": [f"c{i}b"],
+         "support": 1, "path": i, "hop": 1}
+        for i in range(30)
+    ]
+    facts = verbalise(sorted(many, key=lambda s: (s["path"], s["hop"])), limit=20)
+    assert len(facts) == 20
+    assert all(" → " in f["text"] for f in facts), "no walk was truncated mid-chain"
