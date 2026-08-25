@@ -16,14 +16,15 @@ quoted (below), with a judgement-free structural key reported alongside it.
 | 1-hop | 30 | 0.633 | **0.733** | +0.100 | [-0.067, +0.267] — parity |
 | 2-hop | 10 | 0.100 | **0.800** | +0.700 | [+0.400, +1.000] |
 | 3-hop | 12 | 0.083 | **0.417** | +0.333 | [+0.083, +0.583] |
-| aggregation | 8 | 0.125 | **0.875** | +0.750 | [+0.250, +1.000] |
+| aggregation | 8 | 0.125 | **0.750** | +0.625 | [+0.125, +1.000] |
 | out-of-scope (refuse) | 5 | 0.800 | 1.000 | +0.200 | [+0.000, +0.600] |
-| **all** | **65** | **0.400** | **0.723** | **+0.323** | **[+0.185, +0.462]** |
+| **all** | **65** | **0.400** | **0.708** | **+0.308** | **[+0.169, +0.446]** |
 
 | | vector-only | graph + vector |
 |---|---|---|
-| latency p50 / p95 | **6,823** / **10,658** ms | 6,713 / 10,727 ms |
-| $ per query | $0.00144 | **$0.00137** |
+| latency p50 | **6,823 ms** | 13,362 ms |
+| latency p95 | **10,658 ms** | 18,894 ms |
+| $ per query | **$0.00144** | $0.00162 |
 | one-time ingestion | **$0.00** | $1.98 |
 
 **Parity at one hop, and a gap that opens with depth.** The 1-hop interval crosses zero, so
@@ -33,11 +34,16 @@ multi-hop and aggregation interval clears zero: 0.091 → 0.591 across the 22 mu
 questions. That curve is the whole point. Embeddings answer what a passage states and lose
 what a chain implies.
 
-Intervals are a paired bootstrap over per-question correctness, 10,000 resamples, fixed seed.
-Slices of 5-12 questions cannot resolve a small difference and say so.
+**And the graph arm is twice as slow and 13% more expensive per query**, on top of $1.98 to
+build the graph in the first place. It makes two sequential model calls where the baseline
+makes one — the router is ~6.7s of the 13.4s p50, and actual retrieval, graph traversal
+included, is **31 ms**. Nothing here is slow because of the graph; it is slow because
+answering takes two LLM calls.
 
-The graph arm is also *cheaper* per query, because the router refuses out-of-scope questions
-before any synthesis call — and it costs $1.98 to build, which the baseline never pays.
+Intervals are a paired bootstrap over per-question correctness, 10,000 resamples, fixed seed.
+Slices of 5-12 questions cannot resolve a small difference and say so — and re-running the
+same code end to end moves a slice by about one question, which is the other reason to read
+intervals rather than third decimals.
 
 ```mermaid
 flowchart LR
@@ -65,7 +71,7 @@ flowchart LR
 | 2 | pgvector index over the same chunks | **complete** — 2,743 chunks × 3 widths, recall measured by hop count |
 | 3 | Question router (graph vs. vector) | **complete** — 95.4% routing accuracy, multi-hop recall 2.5x the vector baseline |
 | 4 | Grounded answer synthesis with validated citations | **complete** — 319 citations, 0 invented; aggregation 8/8 exact |
-| 5 | Benchmark vs. vector-only baseline | **complete** — 0.400 → 0.723 overall, parity at 1-hop, +0.700 at 2-hop |
+| 5 | Benchmark vs. vector-only baseline | **complete** — 0.400 → 0.708 overall, parity at 1-hop, +0.700 at 2-hop, at 2x the latency |
 
 ## Phase 1 results
 
@@ -454,6 +460,30 @@ only difference is retrieval: the baseline embeds the question, takes the top 10
 makes **no router call at all**, because a plain vector RAG stack has no router to pay for.
 Both arms ran uncached, so latency and cost are measured rather than read back off disk.
 
+### Latency, honestly: two model calls, and 31 ms of retrieval
+
+| stage | p50 |
+|---|---|
+| router LLM call | ~6,700 ms |
+| graph traversal + vector search | **31 ms** |
+| synthesis LLM call | ~6,700 ms |
+
+The graph contributes **0.2% of the latency**. The rest is two language-model calls in
+sequence, and the baseline pays one of them, which is exactly why it is twice as fast.
+Latency tracks *output* length far more than input (r = +0.59 vs +0.18): the tail is
+questions with long answers, not questions with big contexts.
+
+That decomposition also says what would actually help — streaming the answer, or replacing
+the router's model call with a cheap first pass for unambiguous questions — and what would
+not: tuning the index. `ef_search` is not in the critical path at all.
+
+**This table exists because the first version of it was wrong.** Phase 5's latency was
+measured with `kgrag answer --no-cache`, which bypassed the answer cache and left the router
+reading its own — a ~6.7s call served from disk in 16 ms, on the arm being compared against a
+baseline that has no router at all. The flag now reaches every model call a query makes, and
+`test_no_cache_reaches_the_router_not_just_the_synthesiser` fails if it stops doing so. Third
+time this project has timed its own cache; the first two are in the table below.
+
 ### Where the baseline actually fails
 
 Not by hallucinating. Vector-only **refuses 29 of 60** answerable questions where the hybrid
@@ -463,11 +493,11 @@ AMD subsidiaries"* — and the question asked how many there are.
 
 | judge verdict | vector-only | graph + vector |
 |---|---|---|
-| correct | 26 | **47** |
-| partial | 1 | 1 |
+| correct | 26 | **46** |
+| partial | 1 | 2 |
 | incorrect | 7 | 6 |
-| **refused an answerable question** | **29** | **7** |
-| unverifiable (the eval set, not the system) | 2 | 4 |
+| **refused an answerable question** | **29** | **6** |
+| unverifiable (the eval set, not the system) | 2 | 5 |
 
 That is the failure mode this project set out to find. A two-hop question names one entity and
 asks about something reached through another, so the passages that answer it never share
@@ -478,12 +508,12 @@ is not a retrieval question.
 
 | slice | n | keyed | key: vector | key: hybrid | judge: vector | judge: hybrid |
 |---|---|---|---|---|---|---|
-| 1-hop | 30 | 23 | 0.565 | 0.783 | 0.633 | 0.733 |
-| 2-hop | 10 | 10 | 0.000 | 0.600 | 0.100 | 0.800 |
+| 1-hop | 30 | 23 | 0.565 | 0.739 | 0.633 | 0.733 |
+| 2-hop | 10 | 10 | 0.000 | 0.500 | 0.100 | 0.800 |
 | 3-hop | 12 | 10 | 0.000 | 0.500 | 0.083 | 0.417 |
-| aggregation | 8 | 8 | 0.000 | 1.000 | 0.125 | 0.875 |
+| aggregation | 8 | 8 | 0.000 | 0.875 | 0.125 | 0.750 |
 | out-of-scope | 5 | 5 | 0.800 | 1.000 | 0.800 | 1.000 |
-| all | 65 | 56 | 0.304 | 0.750 | 0.400 | 0.723 |
+| all | 65 | 56 | 0.304 | 0.696 | 0.400 | 0.708 |
 
 - **The key** has no opinion: `expected_count` for aggregation, and for every mined question
   the far endpoint of the edge it was templated off — 43 of 47 rows carry one, matched
@@ -537,15 +567,15 @@ correctly downgraded to partial.
 | check | vector-only | graph + vector |
 |---|---|---|
 | A. reproduces the exact count key | 7/8 | 7/8 |
-| B. agrees with the structural key | 46/48 | 43/48 |
-| C. rejects an answer graded against a *different* question | 53/53 | — |
+| B. agrees with the structural key | 46/48 | 42/48 |
+| C. rejects an answer graded against a *different* question | 54/54 | — |
 
 **C is the one that bites.** A judge that rubber-stamps plausible text passes A and B and
 fails only this. Below 90% rejection, `bench` exits instead of publishing. It is also
 adversarially hard rather than random: each answer is graded against its *neighbour* in the
 eval set, which is often the same template with a different subject.
 
-B's five hybrid departures are the interesting rows, not the agreement rate. Three are
+B's six hybrid departures are the interesting rows, not the agreement rate. Four are
 **rescues** — the judge accepting a right answer the key rejected on surface form, which is
 why the judge exists. Two are **overrides**, and one of them is `m010`, the Argentina/Uruguay
 error below: the answer names the keyed entity and states something the filing contradicts.
@@ -593,7 +623,7 @@ dropped.
 | 2-hop | 0.500 | **0.800** |
 | 3-hop | 0.417 | 0.417 |
 | 1-hop | 0.767 | 0.733 |
-| all | 0.692 | **0.723** |
+| all | 0.692 | **0.708** |
 
 **Both changes have a mechanism behind them, not a score.** 3-hop did not move at all, and the
 1-hop dip is one question — inside the noise the interval above describes. Nothing was tuned
@@ -643,9 +673,10 @@ reported success.
 | 4 | A p50 of **7 ms** and $0.00003/question | The cost report was timing the cache. Same bug as the Phase 1 bakeoff, second occurrence. |
 | 4 | ~600 "invented" citations per sweep | The id copied with its `[brackets]`. Counting those as invention would have made the arm comparison measure formatting rather than grounding. |
 | 4 | *"AMD operates in 11 countries"* — correctly cited | Two unrelated sets that happen to share a size, neither of them a count of countries. Every mechanism built to catch invented sources reported green. |
+| 5 | A graph arm apparently *cheaper and no slower* than the baseline | `--no-cache` bypassed the answer cache and left the router reading its own: a ~6.7s call served from disk in 16 ms. Cold, the graph arm is 2x slower and 13% dearer. Third cache-timing bug in the project, now covered by a test. |
 | 5 | A judge disagreeing with the answer key on 19 of 48 answers | The judge was grading against four truncated gold chunks and treating a floor as exhaustive — penalising the arm that retrieves more, on the axis being measured. Twice. |
 
-The recurring shape is worth stating plainly: **a passing run is not evidence.** Four of these
+The recurring shape is worth stating plainly: **a passing run is not evidence.** Five of these
 shipped green — a `verify` that passed while discarding half a relation, an eval that graded
 itself, a resume that replayed a deleted prompt, a benchmark that timed its own cache. What
 caught them was always a second number that should have agreed and did not.

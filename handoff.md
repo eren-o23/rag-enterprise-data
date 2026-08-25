@@ -28,13 +28,18 @@ any of its numbers were quoted:
 | 1-hop | 30 | 0.633 | **0.733** | +0.100 | [-0.067, +0.267] parity |
 | 2-hop | 10 | 0.100 | **0.800** | +0.700 | [+0.400, +1.000] |
 | 3-hop | 12 | 0.083 | **0.417** | +0.333 | [+0.083, +0.583] |
-| aggregation | 8 | 0.125 | **0.875** | +0.750 | [+0.250, +1.000] |
+| aggregation | 8 | 0.125 | **0.750** | +0.625 | [+0.125, +1.000] |
 | out-of-scope | 5 | 0.800 | 1.000 | +0.200 | [+0.000, +0.600] |
-| **all** | 65 | **0.400** | **0.723** | **+0.323** | **[+0.185, +0.462]** |
+| **all** | 65 | **0.400** | **0.708** | **+0.308** | **[+0.169, +0.446]** |
 
-Multi-hop overall: **0.091 → 0.591**. Latency p50/p95 6,823/10,658 ms (vector) vs 6,713/10,727
-(hybrid); $0.00144 vs $0.00137 per query; $1.98 one-time ingestion the baseline does not pay.
-**1-hop parity is measured, not asserted** — the interval crosses zero on 30 questions.
+Multi-hop overall: **0.091 → 0.591**. **1-hop parity is measured, not asserted** — the
+interval crosses zero on 30 questions.
+
+**Latency and cost, measured cold** (every model call uncached, including the router):
+p50/p95 **6,823/10,658 ms** (vector) vs **13,362/18,894 ms** (hybrid); **$0.00144 vs
+$0.00162** per query; $1.98 one-time ingestion the baseline does not pay. The graph arm is
+2x slower and 13% dearer because it makes two sequential model calls where the baseline makes
+one — retrieval itself, traversal included, is **31 ms**.
 The graph arm is cheaper per query because the router refuses out-of-scope questions before
 any synthesis call, and slower at the tail because a traversal runs first.
 
@@ -199,6 +204,14 @@ first: this machine has 8 GB and swap was near capacity during the Phase 1 bakeo
 
 ### Phase 5 specifics — the instruments, and how they fail
 
+- **`--no-cache` must reach every model call, and the router is one.** The first published
+  latency table bypassed the answer cache and left `make_plan` reading its own: a ~6.7s call
+  served from disk in 16 ms, on the arm being compared against a baseline that has no router
+  at all. `test_no_cache_reaches_the_router_not_just_the_synthesiser` guards it. Third
+  cache-timing bug in this project — see decisions.md for the other two.
+- **Re-running the identical code moves a slice by ~one question.** Aggregation went 0.875 →
+  0.750 and overall 0.723 → 0.708 across two runs of the same commit. Serverless inference at
+  temperature 0 is not bit-reproducible. Quote the intervals, never the third decimal.
 - **`kgrag bench` reads the answer log through `answer._prior`, not its own reader.** That
   function already enforces right model, right arm, current `synth_sha`, and no row whose
   synthesiser call never returned. A second set of rules would drift, and the one that
@@ -506,3 +519,13 @@ _Append-only. One line per session — never overwrite previous entries._
   every multi-hop and aggregation interval clears zero (overall +0.323 [+0.185, +0.462]). The
   baseline moved too (0.415 → 0.400) because both arms share one prompt by design — at n=65
   that is noise, and the interval says so instead of prose explaining it away.
+- 2026-08-25: Caught the Phase 5 latency table timing the cache — `--no-cache` bypassed the
+  answer cache but not the router's, so a ~6.7s router call was being served from disk in
+  16 ms on the arm compared against a baseline that makes no router call at all. Measured
+  cold, the graph arm is 2x slower (13,362 vs 6,823 ms p50) and 13% dearer ($0.00162 vs
+  $0.00144), which reverses the "cheaper per query" claim that was published for a few hours.
+  Third cache-timing bug in the project and the first one covered by a test rather than by
+  noticing an implausible number. Decomposed the latency while fixing it: router ~6.7s +
+  synthesis ~6.7s + **31 ms** of actual retrieval, so nothing here is slow because of the
+  graph. Also noted that re-running identical code moves a slice by about one question
+  (aggregation 0.875 → 0.750, overall 0.723 → 0.708).

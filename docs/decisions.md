@@ -1010,3 +1010,31 @@ It also puts the baseline's own movement in proportion. Both arms share one synt
 by design, so a prompt edit moves the baseline too (0.415 → 0.400 across the chain-fix rerun).
 At this n that is noise, and the interval is the honest way to say so rather than explaining
 it away in prose.
+
+## The latency table was timing the cache, for the third time in this project
+
+`kgrag answer --no-cache` bypasses the answer cache. It did not bypass the router's, because
+`make_plan` never took the flag — so Phase 5's published latency counted a synthesis call at
+full price and a router call served from disk in 16 ms. Cold, that router call is ~6.7s at
+p50, and it is half of what a novel question actually waits for.
+
+The error ran in the one direction that flattered the system under test. The graph arm was
+being compared against a baseline that makes **no router call at all**, so the missing 6.7s
+came off exactly one side of the comparison. Published, it said the graph arm was *cheaper
+per query and no slower*. Measured cold it is **2x slower (13,362 vs 6,823 ms p50) and 13%
+dearer ($0.00162 vs $0.00144)** — which is the result the spec asks for out loud: being
+honest that graph RAG is slower and more expensive to build is what makes the accuracy claim
+credible.
+
+Third occurrence of the same shape. The Phase 1 bakeoff benchmarked the incumbent model
+against its own cached answers; Phase 4's cost report timed cache hits and reported a 7 ms
+p50; this one reached one of two calls. The pattern is that a cache is invisible until
+something downstream is implausibly fast, and "notice the implausible number" is not a
+control. So this one is a test — `test_no_cache_reaches_the_router_not_just_the_synthesiser`
+asserts the flag reaches every model call a query makes, and fails if a future call site
+forgets it.
+
+Worth recording alongside: re-running the identical code end to end moved the aggregation
+slice by one question (0.875 → 0.750) and the overall number by 0.015. Serverless inference
+at temperature 0 is not bit-reproducible, which is a second reason the published intervals
+matter more than the third decimal.
