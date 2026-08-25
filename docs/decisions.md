@@ -965,3 +965,48 @@ asks for something else.
 Left in the eval set rather than removed: the row is not wrong, it is measuring the graph,
 and deleting the one question that exposes the difference between the graph and the world
 would be exactly the kind of eval-set edit this project keeps refusing to make.
+
+## A walk is one fact, because chain position is not recoverable from a pile of true facts
+
+The first benchmark run scored 2-hop at 0.500 and the judge's reasons said why: *"who
+competes with the customers that Teradyne supplies?"* was answered with Teradyne's own
+competitors. Both facts were true, both were retrieved, both were correctly cited, and the
+answer was to a different question.
+
+`verbalise()` was flattening a path into one fact per edge. Ranked, deduped and capped at
+twenty, the result is a pile of sentences with nothing saying which edge was the last step —
+and the last step is what a chain question asks for. The model was not guessing; the
+information had been thrown away before the prompt was built.
+
+A path now renders whole, joined with an arrow, and `FACT_LIMIT` counts paths instead of
+edges. The second half is not incidental: paths arrive ranked by summed support, and the
+terminal hop of a chain is reliably the least corroborated thing in it, so the cap was
+dropping exactly the edge that answered the question while keeping the one that did not.
+Citations lead with one chunk id per hop, so the three ids `build_context` shows cover the
+whole walk rather than three from its first edge.
+
+Result: 2-hop **0.500 → 0.800**, overall 0.692 → 0.723. 3-hop did not move, and 1-hop lost a
+question. Both are published beside the win.
+
+The discipline that makes this reportable at all: the change was made because there is a
+mechanism that explains the failure, not because it raised a number. The distinction matters
+more here than anywhere else in the project — every knob in this repo could be turned against
+these 65 questions until the chart looked better, and the result would be a benchmark fitted
+to its own eval set.
+
+## The delta needs an interval, because 65 questions cannot resolve a small difference
+
+Phase 2 settled the embedding-width question with a paired bootstrap and published the
+interval rather than the point estimate. The benchmark needs the same treatment more
+urgently: per-slice n runs from 5 to 30, so a slice moves by a tenth when one question flips.
+
+Paired over per-question correctness, 10,000 resamples, fixed seed. It changed the headline
+in the direction of a stronger claim: **1-hop is +0.100 [-0.067, +0.267]**, an interval that
+crosses zero, so the two systems are indistinguishable on single-hop questions — which is
+precisely the shape the spec predicts and a better result than an unexplained small edge.
+Every multi-hop and aggregation interval clears zero; overall is +0.323 [+0.185, +0.462].
+
+It also puts the baseline's own movement in proportion. Both arms share one synthesis prompt
+by design, so a prompt edit moves the baseline too (0.415 → 0.400 across the chain-fix rerun).
+At this n that is noise, and the interval is the honest way to say so rather than explaining
+it away in prose.

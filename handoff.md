@@ -23,23 +23,31 @@ same 65 questions, the same synthesiser and citation contract, differing only in
 Both arms ran uncached. Accuracy is judged correctness, and the judge was validated before
 any of its numbers were quoted:
 
-| slice | n | vector-only | graph + vector | delta |
-|---|---|---|---|---|
-| 1-hop | 30 | 0.633 | **0.767** | +0.133 |
-| 2-hop | 10 | 0.100 | **0.500** | +0.400 |
-| 3-hop | 12 | 0.083 | **0.417** | +0.333 |
-| aggregation | 8 | 0.125 | **0.875** | +0.750 |
-| out-of-scope | 5 | 1.000 | 1.000 | — |
-| **all** | 65 | **0.415** | **0.692** | **+0.277** |
+| slice | n | vector-only | graph + vector | delta | 95% CI |
+|---|---|---|---|---|---|
+| 1-hop | 30 | 0.633 | **0.733** | +0.100 | [-0.067, +0.267] parity |
+| 2-hop | 10 | 0.100 | **0.800** | +0.700 | [+0.400, +1.000] |
+| 3-hop | 12 | 0.083 | **0.417** | +0.333 | [+0.083, +0.583] |
+| aggregation | 8 | 0.125 | **0.875** | +0.750 | [+0.250, +1.000] |
+| out-of-scope | 5 | 0.800 | 1.000 | +0.200 | [+0.000, +0.600] |
+| **all** | 65 | **0.400** | **0.723** | **+0.323** | **[+0.185, +0.462]** |
 
-Multi-hop overall: **0.091 → 0.455**. Latency p50/p95 6,553/9,354 ms (vector) vs 6,450/10,301
-(hybrid); $0.00141 vs $0.00130 per query; $1.98 one-time ingestion the baseline does not pay.
+Multi-hop overall: **0.091 → 0.591**. Latency p50/p95 6,823/10,658 ms (vector) vs 6,713/10,727
+(hybrid); $0.00144 vs $0.00137 per query; $1.98 one-time ingestion the baseline does not pay.
+**1-hop parity is measured, not asserted** — the interval crosses zero on 30 questions.
 The graph arm is cheaper per query because the router refuses out-of-scope questions before
 any synthesis call, and slower at the tail because a traversal runs first.
 
-**The baseline's failure mode is refusal, not hallucination**: 24 of 60 answerable questions
+**The baseline's failure mode is refusal, not hallucination**: 29 of 60 answerable questions
 refused (hybrid: 7), honestly, because ten passages about the right company do not contain a
 fact reached through a second entity.
+
+**The benchmark found a real bug and the fix is in those numbers.** A path was being
+flattened into one fact per edge, so a chain question was answered at its near end
+("who competes with the customers Teradyne supplies?" → Teradyne's own competitors). Paths
+now render whole and `FACT_LIMIT` counts paths, so the terminal hop — the least corroborated
+edge in any chain — can no longer be dropped by the cap. 2-hop 0.500 → 0.800, overall
+0.692 → 0.723; 3-hop unchanged and 1-hop down one question, both published beside the win.
 
 **The judge was wrong twice before it was right, both times against the graph arm.** Version 1
 graded against four truncated gold chunks and treated a floor as exhaustive; version 2 read
@@ -340,7 +348,7 @@ architecture diagram. Nothing is blocking.
 The one defect worth fixing next, because it has a mechanism-level explanation rather than a
 score-shaped one:
 
-- **Chains are answered at the wrong end.** *"Who competes with the customers that Teradyne
+- **~~Chains are answered at the wrong end.~~ FIXED.** *"Who competes with the customers that Teradyne
   supplies?"* returns Teradyne's own competitors. The traversal walks the chain correctly;
   `route.verbalise()` then flattens it into 20 unordered sentences with no marking of which
   edge is the terminal hop, and the model cannot recover chain position from that. Rendering
@@ -349,9 +357,9 @@ score-shaped one:
   compounds it: terminal edges are the least corroborated, so the cap preferentially drops
   the hop the question is about.
 
-  Re-running both arms after that change costs ~$0.17 and ~20 minutes. Publish both numbers
-  with the change named — and do not tune anything by watching the 65 questions move, which
-  is fitting the eval and would cost this benchmark the only thing that makes it worth
+  **Done, 2026-08-25.** 2-hop 0.500 → 0.800, overall 0.692 → 0.723. The rule still stands for
+  whatever comes next: do not tune anything by watching the 65 questions move. That is
+  fitting the eval, and it would cost this benchmark the only thing that makes it worth
   reading.
 
 Optional cleanup, none of it blocking, all of it unchanged from Phase 4:
@@ -487,3 +495,14 @@ _Append-only. One line per session — never overwrite previous entries._
   jurisdiction from a company's name (Allegro Argentina, incorporated in Uruguay). Wrote the
   benchmark table and the deferred "What broke" narrative into the README; `kgrag verify`
   PASS, 46 tests, `POST /ask` unchanged.
+- 2026-08-25: Fixed the one defect Phase 5's judge named, and re-measured. `verbalise()` was
+  flattening a walk into one fact per edge, so a chain question was answered at its near end;
+  paths now render whole ("X supplies Y → Y competes with Z") and `FACT_LIMIT` counts paths,
+  which also stops the cap dropping the terminal hop (ranked by support, it is the least
+  corroborated edge in any chain). 2-hop 0.500 → 0.800, overall 0.692 → 0.723; 3-hop did not
+  move and 1-hop lost a question, both published beside the win. Added the paired bootstrap
+  Phase 2 used for embedding widths, which improved the headline by weakening it: 1-hop is
+  +0.100 [-0.067, +0.267], so single-hop parity is now measured rather than asserted, and
+  every multi-hop and aggregation interval clears zero (overall +0.323 [+0.185, +0.462]). The
+  baseline moved too (0.415 → 0.400) because both arms share one prompt by design — at n=65
+  that is noise, and the interval says so instead of prose explaining it away.
